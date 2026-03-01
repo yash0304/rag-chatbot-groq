@@ -89,7 +89,7 @@ cp .env.example .env
 
 ### 5. Run the app
 ```bash
-streamlit run app.py
+streamlit run groqRAGAppWithHistory.py.py
 ```
 
 ---
@@ -109,11 +109,11 @@ streamlit run app.py
 ```
 rag-chatbot-groq/
 │
-├── app.py                  # Main Streamlit application
-├── requirements.txt        # Python dependencies
-├── .env.example            # Environment variable template
-├── .gitignore              # Git ignore rules
-└── README.md               # This file
+├── groqRAGAppWithHistory.py                  # Main Streamlit application
+├── requirements.txt                          # Python dependencies
+├── .env.example                              # Environment variable template
+├── .gitignore                                # Git ignore rules
+└── README.md                                 # This file
 ```
 
 ---
