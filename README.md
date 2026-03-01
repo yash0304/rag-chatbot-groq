@@ -153,9 +153,9 @@ rag-chatbot-groq/
 
 ## 👤 Author
 
-**Yash Agarwal**
+**Yash Modi**
 - GitHub: [@yash0304](https://github.com/yash0304)
-- LinkedIn: [linkedin.com/in/yash-agarwal](https://linkedin.com/in/yash-agarwal)
+- LinkedIn: https://www.linkedin.com/in/yash-modi-77838978/
 - Role: Associate Manager — Finance & Business Transformation, HCL Technologies
 - MBA: Data Science & Operations Management, IFMR GSB (Rank 6)
 
