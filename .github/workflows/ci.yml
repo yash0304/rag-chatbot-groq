@@ -21,7 +21,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Lint (ruff)
         run: ruff check app tests
-      - name: Tests (offline: SQLite + stub AI + in-memory vectors)
+      - name: "Tests (offline: SQLite + stub AI + in-memory vectors)"
         run: pytest -q --cov=app --cov-report=term-missing
 
   frontend:
