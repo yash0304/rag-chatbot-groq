@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-abyss text-slate-200 antialiased;
+}
+
+.card {
+  @apply rounded-xl border border-slate-800 bg-realm/80 p-5 shadow-lg shadow-black/30;
+}
+
+.btn {
+  @apply inline-flex items-center gap-2 rounded-lg bg-rune px-4 py-2 text-sm font-semibold text-abyss transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.btn-ghost {
+  @apply inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-rune hover:text-rune disabled:opacity-40;
+}
+
+.input {
+  @apply w-full rounded-lg border border-slate-700 bg-abyss px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-500 focus:border-rune;
+}
+
+.tag-chip {
+  @apply rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400;
+}
