@@ -1,8 +1,10 @@
 # MindQuest — Android Companion App
 
 Kotlin + Jetpack Compose app consuming the same MindQuest REST API as the web client
-(contract: `docs/API_SPECIFICATION.md`). MVP scope: sign-in, character sheet
-(level/XP/streaks), quest hub with one-tap completion, and daily-mission check-ins.
+(contract: `docs/API_SPECIFICATION.md`). Current scope: sign-in with **persistent
+sessions** (encrypted refresh-token storage, silent restore on launch, automatic
+refresh-and-retry on 401), character sheet (level/XP/streaks), quest hub with one-tap
+completion, daily-mission check-ins, and **Narrator chat** with per-answer citations.
 
 ## Build
 
@@ -24,10 +26,10 @@ For a real device or production build, point it at your deployed API over HTTPS 
 remove `android:usesCleartextTraffic` from the manifest.
 
 ## Roadmap
-- Refresh-token persistence (EncryptedSharedPreferences) and auto-refresh
-- Document upload via the system share sheet
-- Narrator chat with citations
-- Push notifications for daily missions (post-MVP; see docs/PRD.md §5.2)
+- [x] Refresh-token persistence (EncryptedSharedPreferences) and auto-refresh
+- [x] Narrator chat with citations
+- [ ] Document upload via the system share sheet
+- [ ] Push notifications for daily missions (post-MVP; see docs/PRD.md §5.2)
 
 CI note: the server CI intentionally does not build this module (no Android SDK on the
 default runners). Add a separate workflow with `android-actions/setup-android` when

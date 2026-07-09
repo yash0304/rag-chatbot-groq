@@ -8,14 +8,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.api.ApiClient
 import com.mindquest.app.api.Habit
 import com.mindquest.app.api.Profile
 import com.mindquest.app.api.Quest
+import com.mindquest.app.api.TokenStore
+import com.mindquest.app.ui.ChatScreen
 import kotlinx.coroutines.launch
 
 private val Rune = Color(0xFFF5B942)
@@ -39,16 +43,70 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class SessionState { Restoring, LoggedOut, LoggedIn }
+
+private enum class Tab(val label: String, val icon: String) {
+    Hub("Quest Hub", "⚔️"),
+    Narrator("Narrator", "🔮"),
+}
+
 @Composable
 fun MindQuestApp() {
-    val api = remember { ApiClient() }
-    var loggedIn by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val api = remember { ApiClient(TokenStore(context.applicationContext)) }
+    val scope = rememberCoroutineScope()
+    var session by remember { mutableStateOf(SessionState.Restoring) }
+    var tab by remember { mutableStateOf(Tab.Hub) }
+
+    LaunchedEffect(Unit) {
+        session = if (api.restoreSession()) SessionState.LoggedIn else SessionState.LoggedOut
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        if (!loggedIn) {
-            LoginScreen(api) { loggedIn = true }
-        } else {
-            QuestHubScreen(api)
+        when (session) {
+            SessionState.Restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+
+            SessionState.LoggedOut -> LoginScreen(api) { session = SessionState.LoggedIn }
+
+            SessionState.LoggedIn -> Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
+                topBar = {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("MindQuest", style = MaterialTheme.typography.titleLarge, color = Rune)
+                        TextButton(onClick = {
+                            scope.launch {
+                                api.logout()
+                                session = SessionState.LoggedOut
+                            }
+                        }) { Text("Sign out") }
+                    }
+                },
+                bottomBar = {
+                    NavigationBar {
+                        Tab.entries.forEach { t ->
+                            NavigationBarItem(
+                                selected = tab == t,
+                                onClick = { tab = t },
+                                icon = { Text(t.icon) },
+                                label = { Text(t.label) },
+                            )
+                        }
+                    }
+                },
+            ) { padding ->
+                Box(Modifier.padding(padding)) {
+                    when (tab) {
+                        Tab.Hub -> QuestHubScreen(api)
+                        Tab.Narrator -> ChatScreen(api)
+                    }
+                }
+            }
         }
     }
 }
@@ -59,6 +117,7 @@ fun LoginScreen(api: ApiClient, onLoggedIn: () -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -81,17 +140,21 @@ fun LoginScreen(api: ApiClient, onLoggedIn: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
+                busy = true
                 scope.launch {
                     try {
-                        api.login(email, password)
+                        api.login(email.trim(), password)
                         onLoggedIn()
                     } catch (e: Exception) {
                         error = "Sign-in failed — check credentials and API_BASE_URL."
+                    } finally {
+                        busy = false
                     }
                 }
             },
+            enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Sign in") }
+        ) { Text(if (busy) "Opening the gates…" else "Sign in") }
     }
 }
 
