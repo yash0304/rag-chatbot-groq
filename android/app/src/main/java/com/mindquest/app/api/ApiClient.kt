@@ -1,6 +1,7 @@
 package com.mindquest.app.api
 
 import com.mindquest.app.BuildConfig
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,6 +21,9 @@ data class TokenPair(val access_token: String, val refresh_token: String)
 
 @Serializable
 private data class LoginRequest(val email: String, val password: String)
+
+@Serializable
+private data class RegisterRequest(val email: String, val password: String, val display_name: String)
 
 @Serializable
 private data class RefreshRequest(val refresh_token: String)
@@ -75,7 +79,14 @@ data class ChatMessage(
 @Serializable
 private data class ChatMessageRequest(val content: String)
 
-class ApiException(val code: Int, message: String) : Exception(message)
+/**
+ * API failure. [code] carries the HTTP status; [code] == 0 means the request
+ * never reached the server (no connectivity / wrong server URL), which the UI
+ * surfaces differently from an auth or validation error.
+ */
+class ApiException(val code: Int, message: String) : Exception(message) {
+    val isConnectionError: Boolean get() = code == 0
+}
 
 /**
  * Client for the MindQuest REST API (contract: docs/API_SPECIFICATION.md).
@@ -84,10 +95,13 @@ class ApiException(val code: Int, message: String) : Exception(message)
  * [TokenStore] and is single-use — every /auth/refresh rotates it — while the
  * access token lives in memory. Authenticated calls transparently refresh and
  * retry once on 401, so callers never deal with token lifecycle.
+ *
+ * The base URL is resolved from [TokenStore] (user-configurable on the auth
+ * screen) and falls back to the build-time default, so the app can target an
+ * emulator host, a LAN IP, or a deployed API without a rebuild.
  */
 class ApiClient(
     private val tokenStore: TokenStore,
-    private val baseUrl: String = BuildConfig.API_BASE_URL,
 ) {
     private val http = OkHttpClient()
     private val json = Json { ignoreUnknownKeys = true }
@@ -97,6 +111,21 @@ class ApiClient(
     @Volatile
     private var accessToken: String? = null
 
+    @Volatile
+    private var baseUrl: String = normalizeUrl(tokenStore.serverUrl() ?: BuildConfig.API_BASE_URL)
+
+    // ---------- server configuration ----------
+
+    /** The currently configured backend base URL, for prefilling the auth screen. */
+    fun currentServerUrl(): String = baseUrl
+
+    /** Persist and apply a new backend base URL (trailing slash trimmed). */
+    fun setServerUrl(url: String) {
+        val normalized = normalizeUrl(url)
+        baseUrl = normalized
+        tokenStore.saveServerUrl(normalized)
+    }
+
     // ---------- session lifecycle ----------
 
     /** Silent sign-in on app start. True if a stored refresh token yielded a session. */
@@ -105,6 +134,12 @@ class ApiClient(
     suspend fun login(email: String, password: String) {
         val body = rawCall("/auth/login", "POST", json.encodeToString(LoginRequest(email, password)))
         applyTokens(json.decodeFromString<TokenPair>(body))
+    }
+
+    /** Register a new hero, then sign them in (mirrors the web onboarding flow). */
+    suspend fun register(email: String, password: String, displayName: String) {
+        rawCall("/auth/register", "POST", json.encodeToString(RegisterRequest(email, password, displayName)))
+        login(email, password)
     }
 
     suspend fun logout() {
@@ -145,10 +180,15 @@ class ApiClient(
                 "PATCH" -> builder.patch((body ?: "{}").toRequestBody(jsonMedia))
                 "DELETE" -> builder.delete()
             }
-            http.newCall(builder.build()).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) throw ApiException(resp.code, text)
-                text
+            try {
+                http.newCall(builder.build()).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) throw ApiException(resp.code, text)
+                    text
+                }
+            } catch (e: IOException) {
+                // DNS/connect/TLS/timeout — the request never got a response.
+                throw ApiException(0, "Cannot reach the server at $baseUrl (${e.message})")
             }
         }
 
@@ -189,4 +229,14 @@ class ApiClient(
         json.decodeFromString(
             call("/chat/sessions/$sessionId/messages", "POST", json.encodeToString(ChatMessageRequest(content)))
         )
+
+    private companion object {
+        fun normalizeUrl(raw: String): String {
+            var url = raw.trim().removeSuffix("/")
+            if (url.isNotEmpty() && !url.startsWith("http://") && !url.startsWith("https://")) {
+                url = "http://$url"
+            }
+            return url
+        }
+    }
 }

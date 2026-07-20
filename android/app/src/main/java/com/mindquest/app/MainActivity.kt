@@ -6,15 +6,20 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.api.ApiClient
+import com.mindquest.app.api.ApiException
 import com.mindquest.app.api.Habit
 import com.mindquest.app.api.Profile
 import com.mindquest.app.api.Quest
@@ -68,7 +73,7 @@ fun MindQuestApp() {
                 CircularProgressIndicator()
             }
 
-            SessionState.LoggedOut -> LoginScreen(api) { session = SessionState.LoggedIn }
+            SessionState.LoggedOut -> AuthScreen(api) { session = SessionState.LoggedIn }
 
             SessionState.LoggedIn -> Scaffold(
                 containerColor = MaterialTheme.colorScheme.background,
@@ -112,49 +117,137 @@ fun MindQuestApp() {
 }
 
 @Composable
-fun LoginScreen(api: ApiClient, onLoggedIn: () -> Unit) {
+fun AuthScreen(api: ApiClient, onAuthed: () -> Unit) {
     val scope = rememberCoroutineScope()
+    var registerMode by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var showServer by remember { mutableStateOf(false) }
+    var serverUrl by remember { mutableStateOf(api.currentServerUrl()) }
+
+    fun submit() {
+        error = null
+        if (registerMode && name.isBlank()) {
+            error = "Every hero needs a name."
+            return
+        }
+        if (email.isBlank() || password.isBlank()) {
+            error = "Email and password are required."
+            return
+        }
+        if (registerMode && password.length < 8) {
+            error = "Password must be at least 8 characters."
+            return
+        }
+        busy = true
+        scope.launch {
+            try {
+                api.setServerUrl(serverUrl)
+                if (registerMode) {
+                    api.register(email.trim(), password, name.trim())
+                } else {
+                    api.login(email.trim(), password)
+                }
+                onAuthed()
+            } catch (e: ApiException) {
+                error = when {
+                    e.isConnectionError ->
+                        "Can't reach the server. Check it's running and the server URL below is correct."
+                    e.code == 401 -> "Invalid email or password."
+                    e.code == 409 -> "That email is already registered — try signing in."
+                    e.code == 422 -> "Please check your details and try again."
+                    else -> "Something went wrong (${e.code}). Please try again."
+                }
+            } catch (e: Exception) {
+                error = "Something went wrong. Please try again."
+            } finally {
+                busy = false
+            }
+        }
+    }
 
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("MindQuest", style = MaterialTheme.typography.headlineLarge, color = Rune)
-        Text("Welcome back, hero.", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            if (registerMode) "Begin your saga." else "Welcome back, hero.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
         Spacer(Modifier.height(24.dp))
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
+
+        if (registerMode) {
+            OutlinedTextField(
+                name, { name = it }, label = { Text("Your name") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         OutlinedTextField(
-            password, { password = it }, label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
+            email, { email = it }, label = { Text("Email") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            password, { password = it },
+            label = { Text(if (registerMode) "Password (8+ characters)" else "Password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
         }
+
         Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = {
-                busy = true
-                scope.launch {
-                    try {
-                        api.login(email.trim(), password)
-                        onLoggedIn()
-                    } catch (e: Exception) {
-                        error = "Sign-in failed — check credentials and API_BASE_URL."
-                    } finally {
-                        busy = false
-                    }
+        Button(onClick = { submit() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                when {
+                    busy && registerMode -> "Forging your legend…"
+                    busy -> "Opening the gates…"
+                    registerMode -> "Create account"
+                    else -> "Sign in"
                 }
-            },
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "Opening the gates…" else "Sign in") }
+            )
+        }
+
+        TextButton(
+            onClick = { registerMode = !registerMode; error = null },
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            Text(
+                if (registerMode) "Already have a hero? Sign in"
+                else "New to the realm? Begin your saga",
+                color = Rune,
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        TextButton(
+            onClick = { showServer = !showServer },
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            Text(if (showServer) "Hide server settings" else "Server settings", color = Rune)
+        }
+        if (showServer) {
+            OutlinedTextField(
+                serverUrl, { serverUrl = it },
+                label = { Text("Server URL") },
+                singleLine = true,
+                supportingText = { Text("Emulator: http://10.0.2.2:8000 · Device: http://<PC-LAN-IP>:8000") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

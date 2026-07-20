@@ -9,6 +9,10 @@ import androidx.security.crypto.MasterKey
  * Persists the refresh token across app launches in EncryptedSharedPreferences
  * (hardware-backed keystore where available). The short-lived access token is
  * kept in memory only — it is re-minted via /auth/refresh on each cold start.
+ *
+ * Also stores the backend server URL the user configured on the auth screen, so
+ * the app can point at an emulator host, a LAN IP, or a deployed API without a
+ * rebuild.
  */
 class TokenStore(context: Context) {
     private val prefs: SharedPreferences = try {
@@ -33,11 +37,19 @@ class TokenStore(context: Context) {
         prefs.edit().putString(KEY_REFRESH, token).apply()
     }
 
+    fun serverUrl(): String? = prefs.getString(KEY_SERVER_URL, null)
+
+    fun saveServerUrl(url: String) {
+        prefs.edit().putString(KEY_SERVER_URL, url).apply()
+    }
+
+    /** Clears the session but keeps the configured server URL. */
     fun clear() {
         prefs.edit().remove(KEY_REFRESH).apply()
     }
 
     private companion object {
         const val KEY_REFRESH = "refresh_token"
+        const val KEY_SERVER_URL = "server_url"
     }
 }
