@@ -121,3 +121,30 @@ data class CollectibleEntity(
     val acquiredAt: Long? = null, // null = not owned
     val source: String? = null,
 )
+
+@Entity(tableName = "documents")
+data class DocumentEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val filename: String,
+    val mimeType: String,
+    val status: String = "processing", // processing|ready|failed
+    val error: String? = null,
+    val summary: String? = null,
+    val domain: String? = null,
+    val tagsCsv: String = "", // comma-separated tags (single-user; avoids a join table)
+    val ocrUsed: Boolean = false,
+    val charCount: Int = 0,
+    val chunkCount: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "chunks", indices = [Index("documentId")])
+data class ChunkEntity(
+    @PrimaryKey val id: String,
+    val documentId: String,
+    val seq: Int,
+    val text: String,
+    val location: String? = null,
+    val vectorCsv: String, // comma-separated floats (hashing embedding, dim 256)
+)

@@ -38,6 +38,8 @@ private enum class Dest(val label: String, val icon: String) {
     Quests("Quests", "⚔️"),
     Habits("Daily Missions", "🔥"),
     Goals("Story Arcs", "📖"),
+    Archives("Archives", "📜"),
+    WorldMap("World Map", "🗺️"),
     Skills("Skills", "✨"),
     Achievements("Hall of Deeds", "🏆"),
     Analytics("Chronicles", "📊"),
@@ -144,6 +146,8 @@ private fun HomeShell(repo: MindQuestRepository) {
                     Dest.Quests -> QuestsScreen(repo, notify)
                     Dest.Habits -> HabitsScreen(repo, notify)
                     Dest.Goals -> GoalsScreen(repo, notify)
+                    Dest.Archives -> ArchivesScreen(repo, notify)
+                    Dest.WorldMap -> WorldMapScreen(repo, (p?.xp ?: 0L).toInt())
                     Dest.Skills -> SkillsScreen(repo, p?.skillPoints ?: 0, notify)
                     Dest.Achievements -> AchievementsScreen(repo)
                     Dest.Analytics -> AnalyticsScreen(repo, p?.xp ?: 0L)

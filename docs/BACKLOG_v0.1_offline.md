@@ -27,11 +27,11 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #12 Personal Bests (offline replacement for Leaderboard).
 
 ## Phase 3 — Second brain (on-device)
-- [ ] #13 Documents ✅: import (file picker / share sheet), on-device OCR (ML Kit) for
+- [x] #13 Documents ✅: import (file picker / share sheet), on-device OCR (ML Kit) for
       images/scans, text extraction for pdf/txt/md, chunking.
-- [ ] #14 On-device embeddings (port hashing embeddings from `services/ai/hashing.py`) +
+- [x] #14 On-device embeddings (port hashing embeddings from `services/ai/hashing.py`) +
       local vector search table; Search screen ✅.
-- [ ] #15 World Map ✅ (knowledge graph: domains ↔ documents ↔ tags on Canvas).
+- [x] #15 World Map ✅ (knowledge graph: domains ↔ documents ↔ tags on Canvas).
 
 ## Phase 4 — Narrator + reviews (per DECISIONS pending item)
 - [ ] #16 Narrator ✅ per chosen strategy (retrieval-only offline v1; optional cloud key).

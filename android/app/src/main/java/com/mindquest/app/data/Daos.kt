@@ -120,6 +120,42 @@ interface GoalDao {
 }
 
 @Dao
+interface DocumentDao {
+    @Upsert
+    suspend fun upsertDocument(doc: DocumentEntity)
+
+    @Insert
+    suspend fun insertChunks(chunks: List<ChunkEntity>)
+
+    @Query("DELETE FROM documents WHERE id = :id")
+    suspend fun deleteDocument(id: String)
+
+    @Query("DELETE FROM chunks WHERE documentId = :documentId")
+    suspend fun deleteChunksOf(documentId: String)
+
+    @Query("SELECT * FROM documents ORDER BY createdAt DESC")
+    fun observeDocuments(): Flow<List<DocumentEntity>>
+
+    @Query("SELECT * FROM documents WHERE status = 'ready'")
+    suspend fun readyDocuments(): List<DocumentEntity>
+
+    @Query("SELECT * FROM chunks")
+    suspend fun allChunks(): List<ChunkEntity>
+
+    @Query("SELECT * FROM documents WHERE id = :id")
+    suspend fun getDocument(id: String): DocumentEntity?
+
+    @Query("SELECT COUNT(*) FROM documents WHERE status = 'ready'")
+    suspend fun readyCount(): Int
+
+    @Query("SELECT COUNT(*) FROM documents")
+    suspend fun anyCount(): Int
+
+    @Query("SELECT COUNT(DISTINCT domain) FROM documents WHERE status = 'ready' AND domain IS NOT NULL")
+    suspend fun domainCount(): Int
+}
+
+@Dao
 interface CatalogDao {
     @Upsert
     suspend fun upsertAchievements(items: List<AchievementEntity>)

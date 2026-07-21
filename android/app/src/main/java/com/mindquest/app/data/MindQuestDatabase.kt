@@ -17,8 +17,10 @@ import androidx.room.RoomDatabase
         AchievementEntity::class,
         SkillEntity::class,
         CollectibleEntity::class,
+        DocumentEntity::class,
+        ChunkEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -28,6 +30,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun habitDao(): HabitDao
     abstract fun goalDao(): GoalDao
     abstract fun catalogDao(): CatalogDao
+    abstract fun documentDao(): DocumentDao
 
     companion object {
         @Volatile

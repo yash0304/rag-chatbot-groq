@@ -18,6 +18,12 @@ own phone doesn't need account login; it was pure friction — the source of the
 board is inherently online/multi-user; offline it's replaced by personal records (best streak,
 level milestones, totals). (Keeps the screen useful without a server.)
 
+2026-07-21 — [DB] **Phase 3 bumps DB to v2 (documents + chunks).** With destructive fallback,
+existing local data (quests/habits/goals/XP from Phase 1–2 testing) resets ONCE on first Phase 3
+launch. Accepted pre-release (test data only); real additive migrations come at MQ-20. A hand
+migration was considered but skipped — a wrong migration crashes on launch, worse than a reset,
+and there is no compiler in the cloud session to verify it.
+
 2026-07-20 — [DB] **Room, pre-release: `fallbackToDestructiveMigration()`.** Schema still
 evolves across phases; destructive fallback is acceptable while unreleased but MUST be replaced
 with real migrations before the first release. (Skill rule: never ship destructive fallback.)
