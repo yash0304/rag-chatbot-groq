@@ -1,46 +1,46 @@
-# MindQuest — Android Companion App
+# MindQuest — Offline Android App
 
-Kotlin + Jetpack Compose app consuming the same MindQuest REST API as the web client
-(contract: `docs/API_SPECIFICATION.md`). Current scope: **register a new hero or sign
-in** with **persistent sessions** (encrypted refresh-token storage, silent restore on
-launch, automatic refresh-and-retry on 401), an **in-app configurable server URL**,
-character sheet (level/XP/streaks), quest hub with one-tap completion, daily-mission
-check-ins, and **Narrator chat** with per-answer citations.
+A fully **offline, on-device** second-brain RPG (Kotlin + Jetpack Compose + Room). No server,
+no login, no network required — all logic and data live on the phone. This is the primary
+product; the web app + FastAPI backend are archived (see `docs/DECISIONS.md`).
 
-## Build
+The only feature that reaches the network is the AI Narrator (Phase 4), which will call
+**Sarvam AI** when online and degrade gracefully offline.
 
-Requires Android Studio (or the Android SDK + JDK 17):
+## Architecture
 
-```bash
-cd android
-./gradlew assembleDebug        # or open in Android Studio
+```
+UI (Compose)  →  MindQuestRepository  →  Room (SQLite, "mindquest.db")
+                        │
+                        └─ GameEngine (XP curve, streaks, achievement rules)
+                           Catalogs   (achievements / skills / collectibles lore)
 ```
 
-No Gradle wrapper is committed; generate one with `gradle wrapper --gradle-version 8.9`
-or let Android Studio create it on first sync.
+- `data/` — Room entities, DAOs, database, and `MindQuestRepository` (the single data API).
+- `domain/` — `GameEngine` (pure progression math, ported from the old Python backend) and
+  `Catalogs` (seed data). Both are plain Kotlin, unit-testable.
+- `ui/` — Compose screens + theme.
 
-## Configuration
+Progression math is a direct port of the former `backend/app/services/gamification.py`, so
+numbers match the original web app exactly.
 
-The backend URL is set **in the app** — tap **Server settings** on the sign-in screen.
-It is persisted, so you set it once:
+## Build & run
 
-- **Emulator** → `http://10.0.2.2:8000` (the default; `10.0.2.2` is the emulator's alias
-  for the host machine's `localhost`).
-- **Physical device** → `http://<your-PC-LAN-IP>:8000` (e.g. `http://192.168.1.25:8000`);
-  the phone and PC must share a Wi-Fi network.
-- **Deployed API** → `https://your-api.example.com`.
+Requires Android Studio (JDK 17 bundled). Open the **`android/`** folder, let Gradle sync
+(downloads Room, KSP, Compose), then Run ▶ on an emulator or a USB-connected device.
+No backend, no `docker compose`, no server URL — it just runs.
 
-`API_BASE_URL` in `app/build.gradle.kts` only supplies the initial default. For a
-production build over HTTPS you can remove `android:usesCleartextTraffic` from the
-manifest (cleartext is needed only for local `http://` testing).
+First launch asks for a hero name and creates a local profile. Everything else is offline.
 
-## Roadmap
-- [x] Register / sign in from the app, with in-app server URL configuration
-- [x] Refresh-token persistence (EncryptedSharedPreferences) and auto-refresh
-- [x] Narrator chat with citations
-- [ ] Document upload via the system share sheet
-- [ ] Push notifications for daily missions (post-MVP; see docs/PRD.md §5.2)
+## Status (see `docs/BACKLOG_v0.1_offline.md`)
+- [x] Phase 0 — Room DB, ported game engine, seeding, local profile + onboarding
+- [x] Phase 1 — Dashboard, Quests, Habits (the daily loop, fully offline)
+- [ ] Phase 2 — Goals, Skills, Achievements, Analytics, Personal Bests
+- [ ] Phase 3 — Documents (on-device OCR), Search, World Map
+- [ ] Phase 4 — Narrator + Weekly Review via Sarvam AI
 
-CI note: the server CI intentionally does not build this module (no Android SDK on the
-default runners). Add a separate workflow with `android-actions/setup-android` when
-Android builds should gate merges.
+## Notes
+- Pre-release, the DB uses `fallbackToDestructiveMigration()` — schema changes wipe local data.
+  Replace with real Room migrations before any release (`docs/DECISIONS.md`).
+- No Android SDK in the cloud dev environment, so each phase is compiled/verified in Android
+  Studio on-device before the next begins.
