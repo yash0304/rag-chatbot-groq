@@ -87,6 +87,9 @@ interface HabitDao {
 
     @Query("SELECT COUNT(*) FROM habit_checkins WHERE habitId = :habitId AND date = :date")
     suspend fun checkinExists(habitId: String, date: String): Int
+
+    @Query("SELECT COUNT(*) FROM habit_checkins")
+    suspend fun totalCheckins(): Int
 }
 
 @Dao
@@ -105,6 +108,9 @@ interface GoalDao {
 
     @Query("SELECT * FROM milestones WHERE goalId = :goalId ORDER BY seq")
     fun observeMilestones(goalId: String): Flow<List<MilestoneEntity>>
+
+    @Query("SELECT * FROM milestones ORDER BY goalId, seq")
+    fun observeAllMilestones(): Flow<List<MilestoneEntity>>
 
     @Query("SELECT * FROM milestones WHERE goalId = :goalId ORDER BY seq")
     suspend fun milestonesOf(goalId: String): List<MilestoneEntity>

@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.GameEngine
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
@@ -24,6 +26,29 @@ data class CheckinResult(
     val newStreak: Int = 0,
     val levelUp: Boolean = false,
     val achievementsUnlocked: List<UnlockedAchievement> = emptyList(),
+)
+
+data class MilestoneResult(
+    val alreadyDone: Boolean = false,
+    val xpAwarded: Int = 0,
+    val goalCompleted: Boolean = false,
+    val levelUp: Boolean = false,
+    val achievementsUnlocked: List<UnlockedAchievement> = emptyList(),
+)
+
+data class SkillUnlockResult(val ok: Boolean, val message: String)
+
+data class DayXp(val date: String, val xp: Int)
+data class DayCount(val date: String, val count: Int)
+
+data class SummaryStats(
+    val xpTotal: Long = 0, val level: Int = 1, val xp7d: Long = 0,
+    val questsCompleted: Int = 0, val habits: Int = 0, val checkins: Int = 0, val bestStreak: Int = 0,
+)
+
+data class PersonalBests(
+    val highestLevel: Int = 1, val totalXp: Long = 0, val bestStreakEver: Int = 0,
+    val mostXpInADay: Int = 0, val questsCompleted: Int = 0, val missionsCompleted: Int = 0,
 )
 
 /**
@@ -205,4 +230,122 @@ class MindQuestRepository(context: Context) {
     suspend fun completedQuestCount(): Int = questDao.completedCount()
     suspend fun habitCount(): Int = habitDao.count()
     suspend fun maxStreak(): Int = habitDao.maxStreak() ?: 0
+
+    // ---------- goals / story arcs ----------
+
+    fun observeGoals(): Flow<List<GoalEntity>> = goalDao.observeGoals()
+    fun observeAllMilestones(): Flow<List<MilestoneEntity>> = goalDao.observeAllMilestones()
+
+    suspend fun createGoal(title: String, narrative: String?, milestones: List<String>) = db.withTransaction {
+        val goalId = UUID.randomUUID().toString()
+        goalDao.upsertGoal(GoalEntity(id = goalId, title = title.trim(), narrative = narrative?.ifBlank { null }))
+        milestones.filter { it.isNotBlank() }.forEachIndexed { i, t ->
+            goalDao.upsertMilestone(MilestoneEntity(id = UUID.randomUUID().toString(), goalId = goalId, seq = i, title = t.trim()))
+        }
+    }
+
+    suspend fun completeMilestone(milestoneId: String): MilestoneResult = db.withTransaction {
+        val m = goalDao.getMilestone(milestoneId) ?: return@withTransaction MilestoneResult()
+        if (m.completed) return@withTransaction MilestoneResult(alreadyDone = true)
+        goalDao.upsertMilestone(m.copy(completed = true, completedAt = System.currentTimeMillis()))
+
+        var xp = 0
+        var levelUp = false
+        val achievements = mutableListOf<UnlockedAchievement>()
+        val milestoneAward = award("milestone_completed", Catalogs.Xp.MILESTONE, refId = m.id)
+        xp += milestoneAward.xpAwarded; levelUp = levelUp || milestoneAward.levelUp
+        achievements += milestoneAward.achievementsUnlocked
+
+        var goalCompleted = false
+        if (goalDao.milestonesOf(m.goalId).all { it.completed }) {
+            val goal = goalDao.getGoal(m.goalId)
+            if (goal != null && goal.status == "active") {
+                goalDao.upsertGoal(goal.copy(status = "completed"))
+                val bonus = award("goal_completed", Catalogs.Xp.GOAL_BONUS, refId = goal.id)
+                xp += bonus.xpAwarded; levelUp = levelUp || bonus.levelUp
+                achievements += bonus.achievementsUnlocked
+                goalCompleted = true
+            }
+        }
+        MilestoneResult(false, xp, goalCompleted, levelUp, achievements)
+    }
+
+    // ---------- skills ----------
+
+    fun observeSkills(): Flow<List<SkillEntity>> = catalogDao.observeSkills()
+
+    suspend fun unlockSkill(code: String): SkillUnlockResult = db.withTransaction {
+        val skill = catalogDao.skill(code) ?: return@withTransaction SkillUnlockResult(false, "Skill not found")
+        if (skill.unlockedAt != null) return@withTransaction SkillUnlockResult(false, "Already unlocked")
+        if (skill.parentCode != null) {
+            val parent = catalogDao.skill(skill.parentCode)
+            if (parent?.unlockedAt == null) {
+                return@withTransaction SkillUnlockResult(false, "Unlock ${parent?.name ?: "the previous tier"} first")
+            }
+        }
+        val profile = profileDao.get() ?: return@withTransaction SkillUnlockResult(false, "No profile")
+        if (profile.skillPoints < skill.cost) {
+            return@withTransaction SkillUnlockResult(false, "Need ${skill.cost} skill point(s)")
+        }
+        profileDao.upsert(profile.copy(skillPoints = profile.skillPoints - skill.cost))
+        catalogDao.updateSkill(skill.copy(unlockedAt = System.currentTimeMillis()))
+        SkillUnlockResult(true, "Unlocked ${skill.name}")
+    }
+
+    // ---------- achievements & collectibles ----------
+
+    fun observeAchievements(): Flow<List<AchievementEntity>> = catalogDao.observeAchievements()
+    fun observeOwnedCollectibles(): Flow<List<CollectibleEntity>> = catalogDao.observeOwnedCollectibles()
+
+    // ---------- analytics ----------
+
+    private fun isoDay(epochMillis: Long): String =
+        Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+
+    suspend fun xpDaily(days: Int): List<DayXp> {
+        val since = System.currentTimeMillis() - days.toLong() * 86_400_000L
+        val byDay = xpDao.since(since).groupBy { isoDay(it.createdAt) }.mapValues { e -> e.value.sumOf { it.amount } }
+        return (days downTo 0).map { i ->
+            val d = LocalDate.now().minusDays(i.toLong()).toString()
+            DayXp(d, byDay[d] ?: 0)
+        }
+    }
+
+    suspend fun activityHeatmap(weeks: Int): List<DayCount> {
+        val days = weeks * 7
+        val since = System.currentTimeMillis() - days.toLong() * 86_400_000L
+        val byDay = xpDao.since(since).groupBy { isoDay(it.createdAt) }.mapValues { it.value.size }
+        return (days - 1 downTo 0).map { i ->
+            val d = LocalDate.now().minusDays(i.toLong()).toString()
+            DayCount(d, byDay[d] ?: 0)
+        }
+    }
+
+    suspend fun summary(): SummaryStats {
+        val p = profileDao.get()
+        return SummaryStats(
+            xpTotal = p?.xp ?: 0,
+            level = p?.level ?: 1,
+            xp7d = xpLast7Days(),
+            questsCompleted = questDao.completedCount(),
+            habits = habitDao.count(),
+            checkins = habitDao.totalCheckins(),
+            bestStreak = habitDao.maxBestStreak() ?: 0,
+        )
+    }
+
+    suspend fun personalBests(): PersonalBests {
+        val p = profileDao.get()
+        val mostXpDay = xpDao.since(0)
+            .groupBy { isoDay(it.createdAt) }.mapValues { e -> e.value.sumOf { it.amount } }
+            .values.maxOrNull() ?: 0
+        return PersonalBests(
+            highestLevel = p?.level ?: 1,
+            totalXp = p?.xp ?: 0,
+            bestStreakEver = habitDao.maxBestStreak() ?: 0,
+            mostXpInADay = mostXpDay,
+            questsCompleted = questDao.completedCount(),
+            missionsCompleted = habitDao.totalCheckins(),
+        )
+    }
 }

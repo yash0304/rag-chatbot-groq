@@ -1,48 +1,42 @@
-# HANDOFF — Mind Quest — 2026-07-20 (session 2)
+# HANDOFF — Mind Quest — 2026-07-21 (session 3)
 
 > Overwrite at the end of every session. Must let any model resume in under 2 minutes.
 
 ## Where we are
-- Android app pivoted to **fully offline** (Kotlin + Compose + Room, no server). Phase 0 +
-  Phase 1 built this session and pushed. Not yet compiled on device — awaiting Yash's first
-  Android Studio build of the offline app.
-- Backlog position: **7/20 done** (Phase 0 #1–#4, Phase 1 #5–#7). Next: #8 Goals.
+- Offline Android app. Phase 0 + Phase 1 verified green on device. **Phase 2 (Goals, Skills,
+  Achievements+Collectibles, Analytics, Personal Bests) built this session** — pushed, not yet
+  compiled on device.
+- Backlog: **12/20 done** (#1–#12). Next: Phase 3 #13 Documents.
+- GitHub issues MQ-1..MQ-20 = issues #3..#22. MQ-1..MQ-7 closed; closing MQ-8..MQ-12 (#10–#14) now.
 
 ## What happened this session
-- Locked two decisions (DECISIONS.md): AI via **Sarvam API**; **archive web+backend, Android-only**.
-- Seeded continuity docs: DECISIONS.md, BACKLOG_v0.1_offline.md, HANDOFF.md.
-- Built offline foundation: Room schema (`data/Entities.kt`, `Daos.kt`, `MindQuestDatabase.kt`),
-  `domain/GameEngine.kt` + `domain/Catalogs.kt` (ported from Python backend), and
-  `data/MindQuestRepository.kt` (the single offline data API with the XP award path).
-- Rewrote `MainActivity.kt`: removed login/register/ApiClient/ChatScreen (deleted those files);
-  added local hero onboarding + bottom-nav shell (Dashboard/Quests/Habits).
-- Added `ui/Theme.kt`, `ui/Screens.kt` (Dashboard, Quests, Habits — fully offline, working XP/
-  streaks/achievements feedback via snackbar).
-- Gradle: added Room + KSP (`app/build.gradle.kts`, root `build.gradle.kts`).
+- Switched navigation from bottom-bar to a **ModalNavigationDrawer** (hamburger, like the web
+  sidebar) so it scales to all screens. 8 destinations wired.
+- Repository: added goals (createGoal, completeMilestone with arc-completion bonus), skills
+  (unlockSkill with cost + parent checks), achievements/collectibles observers, analytics
+  (xpDaily, activityHeatmap, summary), personalBests. XP amount constants in `Catalogs.Xp`.
+- New `ui/ProgressionScreens.kt`: GoalsScreen, SkillsScreen, AchievementsScreen, AnalyticsScreen
+  (bar chart + heatmap, pure Compose, no chart lib), PersonalBestsScreen.
+- DAOs: added `totalCheckins()`, `observeAllMilestones()`.
 
 ## In-flight state
-- Files: all new Kotlin brace-balanced; **not compiler-verified** (no Android SDK in cloud).
-  Expect possible small KSP/Compose fixups on first Android Studio sync.
-- Last known good: all committed & pushed to branch `claude/ai-second-brain-rpg-dv5o75`.
+- All new Kotlin brace-balanced, all 8 screen composables present; **not compiler-verified**
+  (no Android SDK in cloud). Watch for: material3 `HorizontalDivider`, drawer APIs, `produceState`
+  generics — all expected fine on compose-bom 2024.09.03 (material3 1.3.0).
+- Last known good: committed & pushed to `claude/ai-second-brain-rpg-dv5o75` (PR #2).
 
 ## Next action (starts next session)
-- If Yash reports a compile error: fix it first.
-- Else Phase 2 #8: Goals/Story-Arcs screen — add GoalDao usage in Repository (createGoal with
-  milestones, completeMilestone → award "milestone_completed"/"goal_completed"), then a
-  GoalsScreen in ui/Screens.kt, add a "Goals" tab (nav is getting full — consider a drawer or a
-  second row / "More" tab when >5 destinations).
+- If Yash reports a compile error, fix first.
+- Else Phase 3 #13 Documents: NEW Room entities (documents/chunks/tags) → DB version bump (dev
+  destructive fallback already on). Import via file picker/share sheet; ML Kit on-device OCR for
+  images/scans; text for pdf/txt/md; chunk; award document_uploaded/document_processed. Then #14
+  (port hashing embeddings + Search), #15 (World Map on Canvas).
 
 ## Open questions / waiting on Yash
-- Does the offline app compile & run in Android Studio? (Sync will download Room/KSP.)
-- Remaining screens (Goals, Skills, Achievements, Analytics, Personal Bests, Documents, Search,
-  World Map, Narrator, Weekly Review) roll out across Phases 2–4 — confirm that phased delivery
-  is OK vs. wanting one giant drop.
+- Does Phase 2 compile & run? (First build after adding Room was green, so KSP is set up.)
 
 ## Not yet done (tracked, deferred)
-- Physically move `backend/` + `frontend/` into `legacy/` (decision logged, not yet executed —
-  kept this commit focused on the Android foundation; do next).
-- PR #2 is still open on this branch and now also contains the offline pivot commits.
+- Move `backend/` + `frontend/` → `legacy/` (decision logged; still not executed — do opportunistically).
 
 ## Build constraint
-- No Android SDK / Kotlin compiler in the cloud session; every phase compiled by Yash in Android
-  Studio. Deliver small verifiable increments.
+- No Kotlin compiler in cloud; each phase compiled by Yash in Android Studio. Small increments.

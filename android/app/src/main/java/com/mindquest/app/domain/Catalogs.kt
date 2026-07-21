@@ -63,4 +63,14 @@ object Catalogs {
     val difficultyXp = mapOf(
         "trivial" to 10, "easy" to 25, "normal" to 50, "hard" to 100, "epic" to 250,
     )
+
+    /** Fixed XP amounts for non-quest events (matches backend DEFAULT_AMOUNTS). */
+    object Xp {
+        const val MILESTONE = 40
+        const val GOAL_BONUS = 150
+        const val DOCUMENT_UPLOADED = 15
+        const val DOCUMENT_PROCESSED = 20
+        const val KNOWLEDGE_CONSULTED = 5
+        const val WEEKLY_REVIEW = 30
+    }
 }

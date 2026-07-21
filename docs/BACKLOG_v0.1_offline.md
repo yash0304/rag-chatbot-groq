@@ -20,11 +20,11 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #7 Habits / Daily Missions ✅ (create, check-in, streak multiplier, 1/day guard).
 
 ## Phase 2 — Progression screens
-- [ ] #8 Goals / Story Arcs ✅ (milestones, arc completion bonus).
-- [ ] #9 Skills ✅ (4 trees, unlock with points, parent prerequisite).
-- [ ] #10 Achievements + Collectibles ✅ (rule-based unlocks, lore).
-- [ ] #11 Analytics ✅ (XP-over-time, activity heatmap, totals).
-- [ ] #12 Personal Bests (offline replacement for Leaderboard).
+- [x] #8 Goals / Story Arcs ✅ (milestones, arc completion bonus).
+- [x] #9 Skills ✅ (4 trees, unlock with points, parent prerequisite).
+- [x] #10 Achievements + Collectibles ✅ (rule-based unlocks, lore).
+- [x] #11 Analytics ✅ (XP-over-time, activity heatmap, totals).
+- [x] #12 Personal Bests (offline replacement for Leaderboard).
 
 ## Phase 3 — Second brain (on-device)
 - [ ] #13 Documents ✅: import (file picker / share sheet), on-device OCR (ML Kit) for
