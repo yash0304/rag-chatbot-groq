@@ -4,6 +4,7 @@ Every search is filtered by user_id — hard tenant isolation at the index level
 """
 
 import math
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -85,18 +86,26 @@ class QdrantVectorStore(VectorStore):
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
+        from qdrant_client.http.exceptions import UnexpectedResponse
         from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
         from app.services.ai.provider import get_ai_provider
 
         dim = get_ai_provider().embed_dim
-        if not self._client.collection_exists(self._collection):
+        if self._client.collection_exists(self._collection):
+            return
+        try:
             self._client.create_collection(
                 self._collection, vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
             )
-            self._client.create_payload_index(
-                self._collection, field_name="user_id", field_schema=PayloadSchemaType.KEYWORD
-            )
+        except UnexpectedResponse as exc:
+            # Lost a create race (409): another request/replica made it — that's fine.
+            if exc.status_code != 409:
+                raise
+            return
+        self._client.create_payload_index(
+            self._collection, field_name="user_id", field_schema=PayloadSchemaType.KEYWORD
+        )
 
     def upsert(self, points: list[VectorPoint]) -> None:
         from qdrant_client.models import PointStruct
@@ -135,14 +144,16 @@ class QdrantVectorStore(VectorStore):
 
 
 _store: VectorStore | None = None
+_store_lock = threading.Lock()
 
 
 def get_vector_store() -> VectorStore:
     global _store
     settings = get_settings()
-    if _store is None:
-        _store = QdrantVectorStore() if settings.vector_backend == "qdrant" else MemoryVectorStore()
-    return _store
+    with _store_lock:  # concurrent first calls must not construct two stores
+        if _store is None:
+            _store = QdrantVectorStore() if settings.vector_backend == "qdrant" else MemoryVectorStore()
+        return _store
 
 
 def reset_vector_store() -> None:

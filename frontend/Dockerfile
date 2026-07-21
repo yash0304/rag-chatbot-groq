@@ -8,6 +8,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next.js resolves rewrites at build time and inlines them into the standalone
+# server, so the backend's in-network address must be supplied as a build arg.
+ARG API_INTERNAL_URL=http://localhost:8000
+ENV API_INTERNAL_URL=$API_INTERNAL_URL
 RUN npm run build
 
 FROM node:20-alpine AS run

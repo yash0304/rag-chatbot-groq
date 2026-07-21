@@ -4,34 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.mindquest.app.api.ApiClient
-import com.mindquest.app.api.Habit
-import com.mindquest.app.api.Profile
-import com.mindquest.app.api.Quest
+import com.mindquest.app.data.MindQuestRepository
+import com.mindquest.app.ui.*
 import kotlinx.coroutines.launch
-
-private val Rune = Color(0xFFF5B942)
-private val Abyss = Color(0xFF0B0E1A)
-private val Realm = Color(0xFF141A2E)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Rune,
-                    background = Abyss,
-                    surface = Realm,
-                )
+                colorScheme = darkColorScheme(primary = Rune, background = Abyss, surface = Realm),
             ) {
                 MindQuestApp()
             }
@@ -39,131 +31,123 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class AppState { Loading, Onboarding, Ready }
+
+private enum class Dest(val label: String, val icon: String) {
+    Dashboard("Dashboard", "🏰"),
+    Quests("Quests", "⚔️"),
+    Habits("Daily Missions", "🔥"),
+    Goals("Story Arcs", "📖"),
+    Skills("Skills", "✨"),
+    Achievements("Hall of Deeds", "🏆"),
+    Analytics("Chronicles", "📊"),
+    PersonalBests("Personal Bests", "🏅"),
+}
+
 @Composable
 fun MindQuestApp() {
-    val api = remember { ApiClient() }
-    var loggedIn by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val repo = remember { MindQuestRepository(context.applicationContext) }
+    var state by remember { mutableStateOf(AppState.Loading) }
+
+    LaunchedEffect(Unit) {
+        repo.seedIfEmpty()
+        state = if (repo.hasProfile()) AppState.Ready else AppState.Onboarding
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        if (!loggedIn) {
-            LoginScreen(api) { loggedIn = true }
-        } else {
-            QuestHubScreen(api)
+        when (state) {
+            AppState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            AppState.Onboarding -> OnboardingScreen(repo) { state = AppState.Ready }
+            AppState.Ready -> HomeShell(repo)
         }
     }
 }
 
 @Composable
-fun LoginScreen(api: ApiClient, onLoggedIn: () -> Unit) {
+private fun OnboardingScreen(repo: MindQuestRepository, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    var name by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
 
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("MindQuest", style = MaterialTheme.typography.headlineLarge, color = Rune)
-        Text("Welcome back, hero.", style = MaterialTheme.typography.bodyMedium)
+        Text("Your knowledge, made legend. Everything lives on this device.", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(24.dp))
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            password, { password = it }, label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        error?.let {
-            Spacer(Modifier.height(8.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
-        }
+        OutlinedTextField(name, { name = it }, label = { Text("Name your hero") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(16.dp))
         Button(
-            onClick = {
-                scope.launch {
-                    try {
-                        api.login(email, password)
-                        onLoggedIn()
-                    } catch (e: Exception) {
-                        error = "Sign-in failed — check credentials and API_BASE_URL."
-                    }
-                }
-            },
+            onClick = { busy = true; scope.launch { repo.createProfile(name); onDone() } },
+            enabled = !busy && name.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Sign in") }
+        ) { Text(if (busy) "Forging your legend…" else "Begin your saga") }
     }
 }
 
 @Composable
-fun QuestHubScreen(api: ApiClient) {
+private fun HomeShell(repo: MindQuestRepository) {
+    var dest by remember { mutableStateOf(Dest.Dashboard) }
+    val profile by repo.observeProfile().collectAsState(initial = null)
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    var profile by remember { mutableStateOf<Profile?>(null) }
-    var quests by remember { mutableStateOf<List<Quest>>(emptyList()) }
-    var habits by remember { mutableStateOf<List<Habit>>(emptyList()) }
+    val notify: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
 
-    fun refresh() {
-        scope.launch {
-            runCatching {
-                profile = api.profile()
-                quests = api.activeQuests()
-                habits = api.habits()
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) { refresh() }
-
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            profile?.let { p ->
-                Card {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Level ${p.level}", style = MaterialTheme.typography.headlineSmall, color = Rune)
-                        Text("${p.xp} XP · ${p.skill_points} skill points · best streak ${p.current_streak_max}")
-                        LinearProgressIndicator(
-                            progress = { (p.progress_pct / 100.0).toFloat() },
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(Modifier.padding(16.dp)) {
+                    Text("MindQuest", style = MaterialTheme.typography.titleLarge, color = Rune)
+                    profile?.let {
+                        Text(it.heroName, color = Parchment)
+                        Spacer(Modifier.height(8.dp))
+                        XpBar(it)
+                    }
+                }
+                HorizontalDivider()
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Dest.entries.forEach { d ->
+                        NavigationDrawerItem(
+                            icon = { Text(d.icon) },
+                            label = { Text(d.label) },
+                            selected = dest == d,
+                            onClick = { dest = d; scope.launch { drawer.close() } },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                         )
                     }
                 }
             }
-        }
-        item { Text("⚔️ Active quests", style = MaterialTheme.typography.titleMedium) }
-        items(quests) { q ->
-            Card {
+        },
+    ) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbar) },
+            topBar = {
                 Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(q.title)
-                        Text("${q.difficulty} · +${q.xp_reward} XP", style = MaterialTheme.typography.bodySmall)
+                    IconButton(onClick = { scope.launch { drawer.open() } }) {
+                        Icon(Icons.Filled.Menu, contentDescription = "Menu", tint = Rune)
                     }
-                    TextButton(onClick = { scope.launch { runCatching { api.completeQuest(q.id) }; refresh() } }) {
-                        Text("Complete")
-                    }
+                    Text(dest.label, style = MaterialTheme.typography.titleLarge, color = Rune, modifier = Modifier.weight(1f))
+                    profile?.let { Text("Lv ${it.level} · ${it.skillPoints}✨", style = MaterialTheme.typography.bodySmall) }
+                    Spacer(Modifier.width(8.dp))
                 }
-            }
-        }
-        item { Text("🔥 Daily missions", style = MaterialTheme.typography.titleMedium) }
-        items(habits) { h ->
-            Card {
-                Row(
-                    Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(h.title)
-                        Text("streak ${h.streak}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (h.checked_in_today) {
-                        Text("✓ done", color = Rune)
-                    } else {
-                        TextButton(onClick = { scope.launch { runCatching { api.checkin(h.id) }; refresh() } }) {
-                            Text("Check in")
-                        }
-                    }
+            },
+        ) { padding ->
+            Box(Modifier.padding(padding)) {
+                val p = profile
+                when (dest) {
+                    Dest.Dashboard -> if (p != null) DashboardScreen(repo, p)
+                    Dest.Quests -> QuestsScreen(repo, notify)
+                    Dest.Habits -> HabitsScreen(repo, notify)
+                    Dest.Goals -> GoalsScreen(repo, notify)
+                    Dest.Skills -> SkillsScreen(repo, p?.skillPoints ?: 0, notify)
+                    Dest.Achievements -> AchievementsScreen(repo)
+                    Dest.Analytics -> AnalyticsScreen(repo, p?.xp ?: 0L)
+                    Dest.PersonalBests -> PersonalBestsScreen(repo, p?.xp ?: 0L)
                 }
             }
         }

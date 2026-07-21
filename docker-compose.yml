@@ -51,11 +51,13 @@ services:
       - "8000:8000"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Baked into the Next.js build (rewrites are resolved at build time).
+        API_INTERNAL_URL: http://backend:8000
     depends_on:
       - backend
-    environment:
-      API_INTERNAL_URL: http://backend:8000
     ports:
       - "3000:3000"
 
