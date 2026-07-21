@@ -27,31 +27,68 @@ object Ingestion {
 
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
-    suspend fun extract(context: Context, uri: Uri, filename: String): Extracted =
+    suspend fun extract(context: Context, uri: Uri, filename: String, mime: String): Extracted =
         withContext(Dispatchers.IO) {
             val ext = filename.substringAfterLast('.', "").lowercase()
-            when (ext) {
-                "txt", "md", "markdown", "" -> {
+            // Decide by extension first, then fall back to MIME type (some pickers hide it).
+            val kind = when {
+                ext in setOf("txt", "md", "markdown", "text", "log", "csv") -> "text"
+                ext in setOf("png", "jpg", "jpeg", "webp") -> "image"
+                ext == "pdf" -> "pdf"
+                ext == "docx" -> "docx"
+                ext == "doc" -> "doc"
+                mime == "application/pdf" -> "pdf"
+                mime.startsWith("image/") -> "image"
+                mime.contains("wordprocessingml") -> "docx"
+                mime == "application/msword" -> "doc"
+                mime.startsWith("text/") -> "text"
+                else -> "text" // best-effort: try to read as plain text
+            }
+            when (kind) {
+                "text" -> {
                     val text = context.contentResolver.openInputStream(uri)?.use {
                         it.readBytes().toString(Charsets.UTF_8)
                     }.orEmpty()
                     Extracted(listOf(1 to text), ocrUsed = false)
                 }
-                "png", "jpg", "jpeg", "webp" -> {
+                "image" -> {
                     val bmp = context.contentResolver.openInputStream(uri)?.use {
                         android.graphics.BitmapFactory.decodeStream(it)
                     } ?: throw IllegalStateException("Could not read image")
                     Extracted(listOf(1 to ocr(bmp)), ocrUsed = true)
                 }
                 "pdf" -> extractPdf(context, uri)
-                else -> {
-                    val text = context.contentResolver.openInputStream(uri)?.use {
-                        it.readBytes().toString(Charsets.UTF_8)
-                    }.orEmpty()
+                "docx" -> {
+                    val text = context.contentResolver.openInputStream(uri)?.use { extractDocx(it) }.orEmpty()
                     Extracted(listOf(1 to text), ocrUsed = false)
                 }
+                "doc" -> throw IllegalStateException(
+                    "Legacy .doc isn't supported — please save it as .docx or PDF and re-upload.",
+                )
+                else -> Extracted(listOf(1 to ""), ocrUsed = false)
             }
         }
+
+    /** Extract text from a .docx (a ZIP whose word/document.xml holds the body). */
+    private fun extractDocx(input: java.io.InputStream): String {
+        java.util.zip.ZipInputStream(input).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (entry.name == "word/document.xml") {
+                    val xml = zis.readBytes().toString(Charsets.UTF_8)
+                    return xml
+                        .replace(Regex("</w:p>"), "\n") // paragraph breaks
+                        .replace(Regex("<w:tab[^>]*/>"), "\t")
+                        .replace(Regex("<[^>]+>"), "") // strip all tags (keeps <w:t> text)
+                        .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                        .replace("&quot;", "\"").replace("&apos;", "'")
+                        .trim()
+                }
+                entry = zis.nextEntry
+            }
+        }
+        return ""
+    }
 
     private fun extractPdf(context: Context, uri: Uri): Extracted {
         val pages = mutableListOf<Pair<Int, String>>()

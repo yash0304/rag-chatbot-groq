@@ -51,10 +51,18 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("The Archives", style = MaterialTheme.typography.headlineMedium, color = Parchment)
                 Button(onClick = {
-                    picker.launch(arrayOf("application/pdf", "text/plain", "text/markdown", "image/*"))
+                    picker.launch(
+                        arrayOf(
+                            "application/pdf",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+                            "application/msword", // .doc (shown; handled with a helpful message)
+                            "text/*", // .txt, .md, .csv, .log, …
+                            "image/*",
+                        ),
+                    )
                 }) { Text("＋ Upload") }
             }
-            Text("PDF, text, markdown, images — OCR & embeddings on-device.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("PDF, Word (.docx), text, markdown, images — OCR & embeddings on-device.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -383,7 +383,7 @@ class MindQuestRepository(private val context: Context) {
         documentDao.upsertDocument(DocumentEntity(id = id, title = name, filename = name, mimeType = mime, status = "processing"))
         award("document_uploaded", Catalogs.Xp.DOCUMENT_UPLOADED, refId = id)
         try {
-            val extracted = Ingestion.extract(context, uri, name)
+            val extracted = Ingestion.extract(context, uri, name, mime)
             val fullText = extracted.pages.joinToString("\n\n") { it.second }
             if (fullText.isBlank()) {
                 error("No text could be extracted (a scanned file may have produced no OCR text).")
