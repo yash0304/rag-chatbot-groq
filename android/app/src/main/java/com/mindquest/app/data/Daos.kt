@@ -156,6 +156,33 @@ interface DocumentDao {
 }
 
 @Dao
+interface ChatDao {
+    @Insert
+    suspend fun insert(message: ChatMessageEntity)
+
+    @Query("SELECT * FROM chat_messages ORDER BY createdAt")
+    fun observeMessages(): Flow<List<ChatMessageEntity>>
+
+    @Query("SELECT * FROM chat_messages ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<ChatMessageEntity>
+
+    @Query("DELETE FROM chat_messages")
+    suspend fun clear()
+}
+
+@Dao
+interface ReviewDao {
+    @Upsert
+    suspend fun upsert(review: WeeklyReviewEntity)
+
+    @Query("SELECT * FROM weekly_reviews ORDER BY weekStart DESC")
+    fun observeReviews(): Flow<List<WeeklyReviewEntity>>
+
+    @Query("SELECT * FROM weekly_reviews WHERE weekStart = :weekStart")
+    suspend fun get(weekStart: String): WeeklyReviewEntity?
+}
+
+@Dao
 interface CatalogDao {
     @Upsert
     suspend fun upsertAchievements(items: List<AchievementEntity>)

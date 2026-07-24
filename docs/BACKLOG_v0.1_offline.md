@@ -34,9 +34,9 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #15 World Map ✅ (knowledge graph: domains ↔ documents ↔ tags on Canvas).
 
 ## Phase 4 — Narrator + reviews (per DECISIONS pending item)
-- [ ] #16 Narrator ✅ per chosen strategy (retrieval-only offline v1; optional cloud key).
-- [ ] #17 Weekly Review ✅ (aggregate stats; narrative offline-templated or via optional key).
-- [ ] #18 AI quest generation (offline template pool; optional cloud key).
+- [x] #16 Narrator ✅ per chosen strategy (retrieval-only offline v1; optional cloud key).
+- [x] #17 Weekly Review ✅ (aggregate stats; narrative offline-templated or via optional key).
+- [x] #18 AI quest generation (offline template pool; optional cloud key).
 
 ## Phase 5 — Data ownership & polish
 - [ ] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").

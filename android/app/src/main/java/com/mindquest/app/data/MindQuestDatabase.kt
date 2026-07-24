@@ -19,8 +19,10 @@ import androidx.room.RoomDatabase
         CollectibleEntity::class,
         DocumentEntity::class,
         ChunkEntity::class,
+        ChatMessageEntity::class,
+        WeeklyReviewEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -31,6 +33,8 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun goalDao(): GoalDao
     abstract fun catalogDao(): CatalogDao
     abstract fun documentDao(): DocumentDao
+    abstract fun chatDao(): ChatDao
+    abstract fun reviewDao(): ReviewDao
 
     companion object {
         @Volatile

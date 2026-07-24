@@ -39,11 +39,14 @@ private enum class Dest(val label: String, val icon: String) {
     Habits("Daily Missions", "🔥"),
     Goals("Story Arcs", "📖"),
     Archives("Archives", "📜"),
+    Narrator("Narrator", "🔮"),
     WorldMap("World Map", "🗺️"),
     Skills("Skills", "✨"),
     Achievements("Hall of Deeds", "🏆"),
     Analytics("Chronicles", "📊"),
+    Review("Weekly Review", "🕯️"),
     PersonalBests("Personal Bests", "🏅"),
+    Settings("Settings", "⚙️"),
 }
 
 @Composable
@@ -147,11 +150,14 @@ private fun HomeShell(repo: MindQuestRepository) {
                     Dest.Habits -> HabitsScreen(repo, notify)
                     Dest.Goals -> GoalsScreen(repo, notify)
                     Dest.Archives -> ArchivesScreen(repo, notify)
+                    Dest.Narrator -> NarratorScreen(repo, notify)
                     Dest.WorldMap -> WorldMapScreen(repo, (p?.xp ?: 0L).toInt())
                     Dest.Skills -> SkillsScreen(repo, p?.skillPoints ?: 0, notify)
                     Dest.Achievements -> AchievementsScreen(repo)
                     Dest.Analytics -> AnalyticsScreen(repo, p?.xp ?: 0L)
+                    Dest.Review -> WeeklyReviewScreen(repo, notify)
                     Dest.PersonalBests -> PersonalBestsScreen(repo, p?.xp ?: 0L)
+                    Dest.Settings -> SettingsScreen(repo, notify)
                 }
             }
         }

@@ -148,3 +148,21 @@ data class ChunkEntity(
     val location: String? = null,
     val vectorCsv: String, // comma-separated floats (hashing embedding, dim 256)
 )
+
+@Entity(tableName = "chat_messages", indices = [Index("createdAt")])
+data class ChatMessageEntity(
+    @PrimaryKey val id: String,
+    val role: String, // user | assistant
+    val content: String,
+    val citationsJson: String = "[]", // JSON array of {index,title,snippet,location}
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "weekly_reviews")
+data class WeeklyReviewEntity(
+    @PrimaryKey val weekStart: String, // ISO yyyy-MM-dd (Monday)
+    val statsJson: String,
+    val narrative: String,
+    val suggestionsJson: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)

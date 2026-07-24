@@ -8,11 +8,16 @@ import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
+import com.mindquest.app.domain.Narrator
+import com.mindquest.app.domain.SarvamClient
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 data class UnlockedAchievement(val code: String, val name: String, val icon: String, val xpBonus: Int)
 
@@ -61,6 +66,18 @@ data class GraphNode(val id: String, val label: String, val type: String, val si
 data class GraphEdge(val source: String, val target: String, val weight: Int)
 data class GraphData(val nodes: List<GraphNode>, val edges: List<GraphEdge>)
 
+@Serializable
+data class Citation(val index: Int, val title: String, val snippet: String, val location: String? = null)
+
+@Serializable
+data class WeekStats(
+    val weekStart: String, val xpEarned: Int = 0, val questsCompleted: Int = 0,
+    val habitCheckins: Int = 0, val documentsProcessed: Int = 0, val milestones: Int = 0,
+)
+
+@Serializable
+private data class QuestGen(val title: String = "", val description: String = "", val difficulty: String = "normal")
+
 /**
  * The app's single offline data API. All screens go through this; nothing touches the network.
  * Ports the write-path semantics of backend/app/services/gamification.py onto Room.
@@ -74,6 +91,15 @@ class MindQuestRepository(private val context: Context) {
     private val goalDao = db.goalDao()
     private val catalogDao = db.catalogDao()
     private val documentDao = db.documentDao()
+    private val chatDao = db.chatDao()
+    private val reviewDao = db.reviewDao()
+    private val json = Json { ignoreUnknownKeys = true }
+
+    val settings = SettingsStore(context)
+    private val sarvam = SarvamClient(settings)
+
+    /** True if the Sarvam key is set, so AI features generate rather than fall back offline. */
+    fun aiConfigured(): Boolean = sarvam.isConfigured
 
     // ---------- bootstrap ----------
 
@@ -454,4 +480,146 @@ class MindQuestRepository(private val context: Context) {
         }
         return GraphData(nodes.values.toList(), edges)
     }
+
+    // ---------- Narrator (RAG chat; Sarvam when configured, retrieval-only offline) ----------
+
+    fun observeChatMessages(): Flow<List<ChatMessageEntity>> = chatDao.observeMessages()
+    suspend fun clearChat() = chatDao.clear()
+
+    fun citationsOf(msg: ChatMessageEntity): List<Citation> =
+        try { json.decodeFromString(msg.citationsJson) } catch (e: Exception) { emptyList() }
+
+    suspend fun sendNarratorMessage(text: String) {
+        chatDao.insert(ChatMessageEntity(id = UUID.randomUUID().toString(), role = "user", content = text))
+        val hits = search(text, 6)
+        val answer: String
+        val citations: List<Citation>
+
+        if (hits.isEmpty()) {
+            answer = "The archives hold no scrolls on this. Upload documents in the Archives, then ask me again."
+            citations = emptyList()
+        } else {
+            val retrievalCitations = hits.mapIndexed { i, h -> Citation(i + 1, h.title, h.snippet, h.location) }
+            if (sarvam.isConfigured) {
+                val blocks = hits.mapIndexed { i, h ->
+                    "[${i + 1}] (from \"${h.title}\"${h.location?.let { ", $it" } ?: ""})\n${h.snippet}"
+                }.joinToString("\n\n")
+                try {
+                    val raw = sarvam.complete(Narrator.NARRATOR_SYSTEM, "Context passages:\n\n$blocks\n\nQuestion: $text")
+                    val cleaned = Narrator.stripInvalidMarkers(raw, hits.size)
+                    answer = cleaned
+                    citations = Narrator.citedIndices(cleaned, hits.size).map { retrievalCitations[it - 1] }
+                } catch (e: Exception) {
+                    answer = "The Narrator rests (${e.message}). From your archives:\n\n" + retrievalAnswer(hits)
+                    citations = retrievalCitations
+                }
+            } else {
+                answer = "From your archives (add a Sarvam key in Settings for a spoken answer):\n\n" + retrievalAnswer(hits)
+                citations = retrievalCitations
+            }
+        }
+        award("knowledge_consulted", Catalogs.Xp.KNOWLEDGE_CONSULTED, refId = null)
+        chatDao.insert(
+            ChatMessageEntity(
+                id = UUID.randomUUID().toString(), role = "assistant", content = answer,
+                citationsJson = json.encodeToString(citations),
+            ),
+        )
+    }
+
+    private fun retrievalAnswer(hits: List<SearchHit>): String =
+        hits.take(3).mapIndexed { i, h -> "[${i + 1}] ${h.snippet}…" }.joinToString("\n\n")
+
+    // ---------- Weekly Review ----------
+
+    fun observeReviews(): Flow<List<WeeklyReviewEntity>> = reviewDao.observeReviews()
+
+    suspend fun generateWeeklyReview(): WeeklyReviewEntity {
+        val today = LocalDate.now()
+        val monday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+        val ws = monday.toString()
+        reviewDao.get(ws)?.let { return it }
+
+        val startMillis = monday.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val events = xpDao.since(startMillis)
+        val byKind = events.groupingBy { it.kind }.eachCount()
+        val stats = WeekStats(
+            weekStart = ws,
+            xpEarned = events.sumOf { it.amount },
+            questsCompleted = byKind["quest_completed"] ?: 0,
+            habitCheckins = byKind["habit_checkin"] ?: 0,
+            documentsProcessed = byKind["document_processed"] ?: 0,
+            milestones = byKind["milestone_completed"] ?: 0,
+        )
+        val narrative = if (sarvam.isConfigured) {
+            try {
+                sarvam.complete(Narrator.REVIEW_SYSTEM, "This week's statistics: ${json.encodeToString(stats)}")
+            } catch (e: Exception) {
+                Narrator.offlineReviewNarrative(stats.xpEarned, stats.questsCompleted, stats.habitCheckins, stats.documentsProcessed)
+            }
+        } else {
+            Narrator.offlineReviewNarrative(stats.xpEarned, stats.questsCompleted, stats.habitCheckins, stats.documentsProcessed)
+        }
+        val review = WeeklyReviewEntity(
+            weekStart = ws,
+            statsJson = json.encodeToString(stats),
+            narrative = narrative,
+            suggestionsJson = json.encodeToString(
+                listOf("Pick one avoided milestone and schedule it first thing next week."),
+            ),
+        )
+        reviewDao.upsert(review)
+        award("weekly_review", Catalogs.Xp.WEEKLY_REVIEW, refId = ws)
+        return review
+    }
+
+    fun weekStatsOf(review: WeeklyReviewEntity): WeekStats =
+        try { json.decodeFromString(review.statsJson) } catch (e: Exception) { WeekStats(review.weekStart) }
+
+    fun suggestionsOf(review: WeeklyReviewEntity): List<String> =
+        try { json.decodeFromString(review.suggestionsJson) } catch (e: Exception) { emptyList() }
+
+    // ---------- AI quest generation ----------
+
+    fun observeDraftQuests(): Flow<List<QuestEntity>> = questDao.observeByStatus("draft")
+
+    suspend fun acceptQuest(id: String) {
+        questDao.get(id)?.let { if (it.status == "draft") questDao.upsert(it.copy(status = "active")) }
+    }
+
+    suspend fun generateQuests(count: Int = 3): Int {
+        val drafts: List<QuestGen> = if (sarvam.isConfigured) {
+            try {
+                val recent = documentDao.readyDocuments().take(5).joinToString("; ") { it.title }
+                val raw = sarvam.complete(
+                    Narrator.QUESTMASTER_SYSTEM,
+                    "Recent studies: $recent. Generate $count quests as a JSON array.",
+                )
+                Narrator.extractJsonArray(raw)?.let { json.decodeFromString<List<QuestGen>>(it) }
+                    ?: offlineQuestPool(count)
+            } catch (e: Exception) {
+                offlineQuestPool(count)
+            }
+        } else {
+            offlineQuestPool(count)
+        }
+        drafts.take(count).forEach { g ->
+            val diff = if (g.difficulty.lowercase() in Catalogs.difficultyXp) g.difficulty.lowercase() else "normal"
+            questDao.upsert(
+                QuestEntity(
+                    id = UUID.randomUUID().toString(),
+                    title = g.title.ifBlank { "Unnamed quest" }.take(255),
+                    description = g.description.take(2000),
+                    difficulty = diff,
+                    xpReward = Catalogs.difficultyXp.getValue(diff),
+                    status = "draft",
+                    source = "ai",
+                ),
+            )
+        }
+        return drafts.take(count).size
+    }
+
+    private fun offlineQuestPool(count: Int): List<QuestGen> =
+        Narrator.questTemplates.shuffled().take(count).map { (t, d, diff) -> QuestGen(t, d, diff) }
 }
