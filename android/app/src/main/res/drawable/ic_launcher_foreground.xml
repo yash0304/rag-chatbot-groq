@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MindQuest mark: an original compass-star inside a rune ring (cartography & runes theme). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- rune ring -->
+    <path
+        android:strokeColor="#F5B942"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,21 a33,33 0 1,0 0.01,0 Z" />
+
+    <!-- outer compass star (long N/E/S/W points) -->
+    <path
+        android:fillColor="#F5B942"
+        android:pathData="M54,27 L61,47 L81,54 L61,61 L54,81 L47,61 L27,54 L47,47 Z" />
+
+    <!-- inner diagonal star for depth -->
+    <path
+        android:fillColor="#C88A1E"
+        android:pathData="M54,40 L58,50 L68,54 L58,58 L54,68 L50,58 L40,54 L50,50 Z" />
+
+    <!-- center gem -->
+    <path
+        android:fillColor="#141A2E"
+        android:pathData="M54,50 a4,4 0 1,0 0.01,0 Z" />
+</vector>
