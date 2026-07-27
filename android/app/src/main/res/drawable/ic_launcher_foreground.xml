@@ -27,16 +27,16 @@
                 android:type="linear"
                 android:startX="54" android:startY="27"
                 android:endX="54" android:endY="81">
-                <item android:offset="0.0" android:color="#FFE7B0" />
-                <item android:offset="0.5" android:color="#FBB042" />
-                <item android:offset="1.0" android:color="#F0824A" />
+                <item android:offset="0.0" android:color="#FFEFC2" />
+                <item android:offset="0.5" android:color="#FBCB55" />
+                <item android:offset="1.0" android:color="#EDAB39" />
             </gradient>
         </aapt:attr>
     </path>
 
     <!-- inner diagonal star for depth -->
     <path
-        android:fillColor="#E07C3A"
+        android:fillColor="#C98A2E"
         android:pathData="M54,40 L58,50 L68,54 L58,58 L54,68 L50,58 L40,54 L50,50 Z" />
 
     <!-- center gem -->
