@@ -18,6 +18,12 @@ own phone doesn't need account login; it was pure friction — the source of the
 board is inherently online/multi-user; offline it's replaced by personal records (best streak,
 level milestones, totals). (Keeps the screen useful without a server.)
 
+2026-07-21 — [DB] **Real Room migrations replace destructive fallback (MQ-20).** Added additive
+`MIGRATION_1_2` (documents+chunks) and `MIGRATION_2_3` (chat+reviews); builder now uses
+`addMigrations(...)` + `fallbackToDestructiveMigrationOnDowngrade()`. Upgrades preserve data.
+(Yash's device is already v3, so these are inert for him but correct for any older install and
+for the record — no more data resets on future additive schema changes.)
+
 2026-07-21 — [DB] **Phase 3 bumps DB to v2 (documents + chunks).** With destructive fallback,
 existing local data (quests/habits/goals/XP from Phase 1–2 testing) resets ONCE on first Phase 3
 launch. Accepted pre-release (test data only); real additive migrations come at MQ-20. A hand

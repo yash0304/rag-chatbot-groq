@@ -32,12 +32,13 @@ No backend, no `docker compose`, no server URL — it just runs.
 
 First launch asks for a hero name and creates a local profile. Everything else is offline.
 
-## Status (see `docs/BACKLOG_v0.1_offline.md`)
+## Status (see `docs/BACKLOG_v0.1_offline.md`) — FEATURE COMPLETE (20/20)
 - [x] Phase 0 — Room DB, ported game engine, seeding, local profile + onboarding
-- [x] Phase 1 — Dashboard, Quests, Habits (the daily loop, fully offline)
-- [ ] Phase 2 — Goals, Skills, Achievements, Analytics, Personal Bests
-- [ ] Phase 3 — Documents (on-device OCR), Search, World Map
-- [ ] Phase 4 — Narrator + Weekly Review via Sarvam AI
+- [x] Phase 1 — Dashboard, Quests, Habits (the daily loop)
+- [x] Phase 2 — Goals, Skills, Achievements, Analytics, Personal Bests
+- [x] Phase 3 — Documents (on-device OCR), Search, World Map
+- [x] Phase 4 — Narrator + Weekly Review + AI quest generation via Sarvam (optional)
+- [x] Phase 5 — Data export/import (JSON + Markdown), real DB migrations, optional PIN lock
 
 ## Notes
 - Pre-release, the DB uses `fallbackToDestructiveMigration()` — schema changes wipe local data.

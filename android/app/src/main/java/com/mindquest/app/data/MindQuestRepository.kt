@@ -14,7 +14,9 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -77,6 +79,27 @@ data class WeekStats(
 
 @Serializable
 private data class QuestGen(val title: String = "", val description: String = "", val difficulty: String = "normal")
+
+/** Full portable snapshot of everything on-device — "his data must outlive the app." */
+@Serializable
+data class ExportBundle(
+    val version: Int = 1,
+    val exportedAt: Long = 0,
+    val profile: ProfileEntity? = null,
+    val xpEvents: List<XpEventEntity> = emptyList(),
+    val quests: List<QuestEntity> = emptyList(),
+    val habits: List<HabitEntity> = emptyList(),
+    val checkins: List<HabitCheckinEntity> = emptyList(),
+    val goals: List<GoalEntity> = emptyList(),
+    val milestones: List<MilestoneEntity> = emptyList(),
+    val achievements: List<AchievementEntity> = emptyList(),
+    val skills: List<SkillEntity> = emptyList(),
+    val collectibles: List<CollectibleEntity> = emptyList(),
+    val documents: List<DocumentEntity> = emptyList(),
+    val chunks: List<ChunkEntity> = emptyList(),
+    val chat: List<ChatMessageEntity> = emptyList(),
+    val reviews: List<WeeklyReviewEntity> = emptyList(),
+)
 
 /**
  * The app's single offline data API. All screens go through this; nothing touches the network.
@@ -622,4 +645,77 @@ class MindQuestRepository(private val context: Context) {
 
     private fun offlineQuestPool(count: Int): List<QuestGen> =
         Narrator.questTemplates.shuffled().take(count).map { (t, d, diff) -> QuestGen(t, d, diff) }
+
+    // ---------- data ownership: export / import ----------
+
+    suspend fun exportBundle(): ExportBundle = ExportBundle(
+        exportedAt = System.currentTimeMillis(),
+        profile = profileDao.get(),
+        xpEvents = xpDao.allEvents(),
+        quests = questDao.allQuests(),
+        habits = habitDao.allHabits(),
+        checkins = habitDao.allCheckins(),
+        goals = goalDao.allGoals(),
+        milestones = goalDao.allMilestones(),
+        achievements = catalogDao.achievements(),
+        skills = catalogDao.allSkills(),
+        collectibles = catalogDao.allCollectibles(),
+        documents = documentDao.allDocuments(),
+        chunks = documentDao.allChunks(),
+        chat = chatDao.allMessages(),
+        reviews = reviewDao.allReviews(),
+    )
+
+    suspend fun exportJson(): String {
+        val bundle = exportBundle()
+        settings.recordBackup()
+        return Json { prettyPrint = true }.encodeToString(bundle)
+    }
+
+    suspend fun exportMarkdown(): String {
+        val b = exportBundle()
+        return buildString {
+            appendLine("# MindQuest — Export")
+            appendLine("Exported ${LocalDate.now()}")
+            b.profile?.let { appendLine("\n**Hero:** ${it.heroName} · Level ${it.level} · ${it.xp} XP") }
+            appendLine("\n## Totals")
+            appendLine("- Documents: ${b.documents.size}")
+            appendLine("- Quests: ${b.quests.count { it.status == "completed" }} completed / ${b.quests.size} total")
+            appendLine("- Habits: ${b.habits.size} · check-ins: ${b.checkins.size}")
+            appendLine("- Goals: ${b.goals.size} · achievements: ${b.achievements.count { it.unlockedAt != null }}")
+            if (b.goals.isNotEmpty()) {
+                appendLine("\n## Story Arcs")
+                b.goals.forEach { g -> appendLine("- ${g.title} (${g.status})") }
+            }
+            if (b.documents.isNotEmpty()) {
+                appendLine("\n## Archives")
+                b.documents.forEach { d -> appendLine("- ${d.title}${d.domain?.let { " — $it" } ?: ""}") }
+            }
+        }
+    }
+
+    /** Replace all on-device data with an imported bundle. Returns items restored. */
+    suspend fun importJson(jsonStr: String): Int {
+        val bundle = json.decodeFromString<ExportBundle>(jsonStr)
+        withContext(Dispatchers.IO) { db.clearAllTables() }
+        bundle.profile?.let { profileDao.upsert(it) }
+        bundle.xpEvents.forEach { xpDao.insert(it) }
+        bundle.quests.forEach { questDao.upsert(it) }
+        bundle.habits.forEach { habitDao.upsert(it) }
+        bundle.checkins.forEach { habitDao.insertCheckin(it) }
+        bundle.goals.forEach { goalDao.upsertGoal(it) }
+        bundle.milestones.forEach { goalDao.upsertMilestone(it) }
+        if (bundle.achievements.isNotEmpty()) catalogDao.upsertAchievements(bundle.achievements)
+        if (bundle.skills.isNotEmpty()) catalogDao.upsertSkills(bundle.skills)
+        if (bundle.collectibles.isNotEmpty()) catalogDao.upsertCollectibles(bundle.collectibles)
+        bundle.documents.forEach { documentDao.upsertDocument(it) }
+        if (bundle.chunks.isNotEmpty()) documentDao.insertChunks(bundle.chunks)
+        bundle.chat.forEach { chatDao.insert(it) }
+        bundle.reviews.forEach { reviewDao.upsert(it) }
+        seedIfEmpty() // restore catalog rows if the bundle predates them
+        return bundle.xpEvents.size + bundle.quests.size + bundle.habits.size +
+            bundle.goals.size + bundle.documents.size
+    }
+
+    fun lastBackup(): Long = settings.lastBackup()
 }

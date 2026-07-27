@@ -4,12 +4,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
@@ -176,6 +178,28 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             Text("Sarvam usage", fontWeight = FontWeight.Bold, color = Parchment)
             Text("${usage.first} calls · ${usage.second} chars in · ${usage.third} chars out", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         } }
-        Text("Your key is stored encrypted on this device and only sent to Sarvam on requests you initiate.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+
+        var pin by remember { mutableStateOf("") }
+        var hasPin by remember { mutableStateOf(s.hasPin()) }
+        Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("App lock", fontWeight = FontWeight.Bold, color = Parchment)
+            Text(
+                if (hasPin) "✓ PIN set — required on each launch." else "Optional numeric PIN, checked when the app opens.",
+                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            )
+            if (!hasPin) {
+                OutlinedTextField(
+                    pin, { pin = it.filter { c -> c.isDigit() } }, label = { Text("New PIN (4+ digits)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                Button(enabled = pin.length >= 4, onClick = { s.setPin(pin); pin = ""; hasPin = true; notify("PIN set.") }) { Text("Set PIN") }
+            } else {
+                OutlinedButton(onClick = { s.clearPin(); hasPin = false; notify("PIN removed.") }) { Text("Remove PIN") }
+            }
+        } }
+
+        Text("Your key and PIN are stored encrypted on this device and never leave it (the key only rides along on Sarvam requests you initiate).", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
 }

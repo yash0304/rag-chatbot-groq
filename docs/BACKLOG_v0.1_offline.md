@@ -39,8 +39,8 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #18 AI quest generation (offline template pool; optional cloud key).
 
 ## Phase 5 — Data ownership & polish
-- [ ] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").
-- [ ] #20 Optional PIN/biometric lock; backup reminder.
+- [x] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").
+- [x] #20 Optional PIN/biometric lock; backup reminder.
 
 ## Explicitly out (offline)
 - Multi-user accounts, JWT, cross-device sync, hosted leaderboard — dropped or deferred.

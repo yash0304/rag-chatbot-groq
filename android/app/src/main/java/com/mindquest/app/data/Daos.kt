@@ -36,6 +36,9 @@ interface XpEventDao {
 
     @Query("SELECT * FROM xp_events WHERE createdAt >= :since ORDER BY createdAt")
     suspend fun since(since: Long): List<XpEventEntity>
+
+    @Query("SELECT * FROM xp_events ORDER BY createdAt")
+    suspend fun allEvents(): List<XpEventEntity>
 }
 
 @Dao
@@ -57,6 +60,9 @@ interface QuestDao {
 
     @Query("SELECT COUNT(*) FROM quests WHERE status = 'completed' AND difficulty = 'epic'")
     suspend fun epicCompletedCount(): Int
+
+    @Query("SELECT * FROM quests")
+    suspend fun allQuests(): List<QuestEntity>
 }
 
 @Dao
@@ -90,6 +96,12 @@ interface HabitDao {
 
     @Query("SELECT COUNT(*) FROM habit_checkins")
     suspend fun totalCheckins(): Int
+
+    @Query("SELECT * FROM habits")
+    suspend fun allHabits(): List<HabitEntity>
+
+    @Query("SELECT * FROM habit_checkins")
+    suspend fun allCheckins(): List<HabitCheckinEntity>
 }
 
 @Dao
@@ -117,6 +129,12 @@ interface GoalDao {
 
     @Query("SELECT * FROM milestones WHERE id = :id")
     suspend fun getMilestone(id: String): MilestoneEntity?
+
+    @Query("SELECT * FROM goals")
+    suspend fun allGoals(): List<GoalEntity>
+
+    @Query("SELECT * FROM milestones")
+    suspend fun allMilestones(): List<MilestoneEntity>
 }
 
 @Dao
@@ -145,6 +163,9 @@ interface DocumentDao {
     @Query("SELECT * FROM documents WHERE id = :id")
     suspend fun getDocument(id: String): DocumentEntity?
 
+    @Query("SELECT * FROM documents")
+    suspend fun allDocuments(): List<DocumentEntity>
+
     @Query("SELECT COUNT(*) FROM documents WHERE status = 'ready'")
     suspend fun readyCount(): Int
 
@@ -166,6 +187,9 @@ interface ChatDao {
     @Query("SELECT * FROM chat_messages ORDER BY createdAt DESC LIMIT :limit")
     suspend fun recent(limit: Int): List<ChatMessageEntity>
 
+    @Query("SELECT * FROM chat_messages ORDER BY createdAt")
+    suspend fun allMessages(): List<ChatMessageEntity>
+
     @Query("DELETE FROM chat_messages")
     suspend fun clear()
 }
@@ -180,6 +204,9 @@ interface ReviewDao {
 
     @Query("SELECT * FROM weekly_reviews WHERE weekStart = :weekStart")
     suspend fun get(weekStart: String): WeeklyReviewEntity?
+
+    @Query("SELECT * FROM weekly_reviews")
+    suspend fun allReviews(): List<WeeklyReviewEntity>
 }
 
 @Dao
@@ -211,6 +238,9 @@ interface CatalogDao {
     @Query("SELECT * FROM skills WHERE code = :code")
     suspend fun skill(code: String): SkillEntity?
 
+    @Query("SELECT * FROM skills")
+    suspend fun allSkills(): List<SkillEntity>
+
     @Query("SELECT COUNT(*) FROM skills")
     suspend fun skillCount(): Int
 
@@ -225,6 +255,9 @@ interface CatalogDao {
 
     @Query("SELECT * FROM collectibles WHERE code = :code")
     suspend fun collectible(code: String): CollectibleEntity?
+
+    @Query("SELECT * FROM collectibles")
+    suspend fun allCollectibles(): List<CollectibleEntity>
 
     @Query("SELECT COUNT(*) FROM collectibles")
     suspend fun collectibleCount(): Int

@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppState { Loading, Onboarding, Ready }
+private enum class AppState { Loading, Onboarding, Locked, Ready }
 
 private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
@@ -46,6 +46,7 @@ private enum class Dest(val label: String, val icon: String) {
     Analytics("Chronicles", "📊"),
     Review("Weekly Review", "🕯️"),
     PersonalBests("Personal Bests", "🏅"),
+    Data("Backup", "💾"),
     Settings("Settings", "⚙️"),
 }
 
@@ -57,13 +58,18 @@ fun MindQuestApp() {
 
     LaunchedEffect(Unit) {
         repo.seedIfEmpty()
-        state = if (repo.hasProfile()) AppState.Ready else AppState.Onboarding
+        state = when {
+            !repo.hasProfile() -> AppState.Onboarding
+            repo.settings.hasPin() -> AppState.Locked
+            else -> AppState.Ready
+        }
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (state) {
             AppState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             AppState.Onboarding -> OnboardingScreen(repo) { state = AppState.Ready }
+            AppState.Locked -> LockScreen(repo) { state = AppState.Ready }
             AppState.Ready -> HomeShell(repo)
         }
     }
@@ -157,6 +163,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                     Dest.Analytics -> AnalyticsScreen(repo, p?.xp ?: 0L)
                     Dest.Review -> WeeklyReviewScreen(repo, notify)
                     Dest.PersonalBests -> PersonalBestsScreen(repo, p?.xp ?: 0L)
+                    Dest.Data -> DataScreen(repo, notify)
                     Dest.Settings -> SettingsScreen(repo, notify)
                 }
             }
