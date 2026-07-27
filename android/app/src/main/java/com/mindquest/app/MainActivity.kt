@@ -108,7 +108,7 @@ private fun HomeShell(repo: MindQuestRepository) {
         drawerState = drawer,
         drawerContent = {
             ModalDrawerSheet {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.statusBarsPadding().padding(16.dp)) {
                     Text("MindQuest", style = MaterialTheme.typography.titleLarge, color = Rune)
                     profile?.let {
                         Text(it.heroName, color = Parchment)
@@ -136,7 +136,7 @@ private fun HomeShell(repo: MindQuestRepository) {
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = { scope.launch { drawer.open() } }) {
