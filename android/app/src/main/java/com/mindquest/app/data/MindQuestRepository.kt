@@ -544,8 +544,8 @@ class MindQuestRepository(private val context: Context) {
     suspend fun sendNarratorMessage(text: String) {
         chatDao.insert(ChatMessageEntity(id = UUID.randomUUID().toString(), role = "user", content = text))
         val hits = search(text, 6)
-        val answer: String
-        val citations: List<Citation>
+        var answer: String
+        var citations: List<Citation>
 
         if (hits.isEmpty()) {
             answer = "The archives hold no scrolls on this. Upload documents in the Archives, then ask me again."
