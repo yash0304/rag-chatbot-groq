@@ -31,17 +31,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppState { Loading, Onboarding, Ready }
+private enum class AppState { Loading, Onboarding, Locked, Ready }
 
 private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
     Quests("Quests", "⚔️"),
     Habits("Daily Missions", "🔥"),
     Goals("Story Arcs", "📖"),
+    Archives("Archives", "📜"),
+    Narrator("Narrator", "🔮"),
+    WorldMap("World Map", "🗺️"),
     Skills("Skills", "✨"),
     Achievements("Hall of Deeds", "🏆"),
     Analytics("Chronicles", "📊"),
+    Review("Weekly Review", "🕯️"),
     PersonalBests("Personal Bests", "🏅"),
+    Data("Backup", "💾"),
+    Settings("Settings", "⚙️"),
 }
 
 @Composable
@@ -52,13 +58,18 @@ fun MindQuestApp() {
 
     LaunchedEffect(Unit) {
         repo.seedIfEmpty()
-        state = if (repo.hasProfile()) AppState.Ready else AppState.Onboarding
+        state = when {
+            !repo.hasProfile() -> AppState.Onboarding
+            repo.settings.hasPin() -> AppState.Locked
+            else -> AppState.Ready
+        }
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (state) {
             AppState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             AppState.Onboarding -> OnboardingScreen(repo) { state = AppState.Ready }
+            AppState.Locked -> LockScreen(repo) { state = AppState.Ready }
             AppState.Ready -> HomeShell(repo)
         }
     }
@@ -97,7 +108,7 @@ private fun HomeShell(repo: MindQuestRepository) {
         drawerState = drawer,
         drawerContent = {
             ModalDrawerSheet {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.statusBarsPadding().padding(16.dp)) {
                     Text("MindQuest", style = MaterialTheme.typography.titleLarge, color = Rune)
                     profile?.let {
                         Text(it.heroName, color = Parchment)
@@ -125,7 +136,7 @@ private fun HomeShell(repo: MindQuestRepository) {
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = { scope.launch { drawer.open() } }) {
@@ -144,10 +155,16 @@ private fun HomeShell(repo: MindQuestRepository) {
                     Dest.Quests -> QuestsScreen(repo, notify)
                     Dest.Habits -> HabitsScreen(repo, notify)
                     Dest.Goals -> GoalsScreen(repo, notify)
+                    Dest.Archives -> ArchivesScreen(repo, notify)
+                    Dest.Narrator -> NarratorScreen(repo, notify)
+                    Dest.WorldMap -> WorldMapScreen(repo, (p?.xp ?: 0L).toInt())
                     Dest.Skills -> SkillsScreen(repo, p?.skillPoints ?: 0, notify)
                     Dest.Achievements -> AchievementsScreen(repo)
                     Dest.Analytics -> AnalyticsScreen(repo, p?.xp ?: 0L)
+                    Dest.Review -> WeeklyReviewScreen(repo, notify)
                     Dest.PersonalBests -> PersonalBestsScreen(repo, p?.xp ?: 0L)
+                    Dest.Data -> DataScreen(repo, notify)
+                    Dest.Settings -> SettingsScreen(repo, notify)
                 }
             }
         }

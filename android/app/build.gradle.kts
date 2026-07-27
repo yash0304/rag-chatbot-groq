@@ -56,6 +56,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // On-device OCR (offline, bundled Latin model) — Phase 3 documents
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     // Sarvam AI (Phase 4) + JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

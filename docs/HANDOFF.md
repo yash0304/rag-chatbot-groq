@@ -1,42 +1,45 @@
-# HANDOFF — Mind Quest — 2026-07-21 (session 3)
+# HANDOFF — Mind Quest — 2026-07-21 (session 6)
 
 > Overwrite at the end of every session. Must let any model resume in under 2 minutes.
 
 ## Where we are
-- Offline Android app. Phase 0 + Phase 1 verified green on device. **Phase 2 (Goals, Skills,
-  Achievements+Collectibles, Analytics, Personal Bests) built this session** — pushed, not yet
-  compiled on device.
-- Backlog: **12/20 done** (#1–#12). Next: Phase 3 #13 Documents.
-- GitHub issues MQ-1..MQ-20 = issues #3..#22. MQ-1..MQ-7 closed; closing MQ-8..MQ-12 (#10–#14) now.
+- **Offline Android app is FEATURE-COMPLETE: 20/20 backlog items done.** Phases 0–2 merged to
+  main; Phases 3–5 on branch `claude/ai-second-brain-rpg-dv5o75` = **PR #23** (not yet merged).
+- Phase 5 (this session): data export/import + release-prep (real migrations, PIN lock).
+- All GitHub issues MQ-1..MQ-20 (#3–#22) closed.
 
-## What happened this session
-- Switched navigation from bottom-bar to a **ModalNavigationDrawer** (hamburger, like the web
-  sidebar) so it scales to all screens. 8 destinations wired.
-- Repository: added goals (createGoal, completeMilestone with arc-completion bonus), skills
-  (unlockSkill with cost + parent checks), achievements/collectibles observers, analytics
-  (xpDaily, activityHeatmap, summary), personalBests. XP amount constants in `Catalogs.Xp`.
-- New `ui/ProgressionScreens.kt`: GoalsScreen, SkillsScreen, AchievementsScreen, AnalyticsScreen
-  (bar chart + heatmap, pure Compose, no chart lib), PersonalBestsScreen.
-- DAOs: added `totalCheckins()`, `observeAllMilestones()`.
+## What happened this session (Phase 5)
+- **Export/import (MQ-19):** all 14 entities made `@Serializable`; `ExportBundle` snapshot;
+  `exportJson` (pretty), `exportMarkdown` (readable summary), `importJson` (clearAllTables →
+  restore → seedIfEmpty). New `ui/DataScreen.kt`: Save backup (SAF CreateDocument), Share summary
+  (ACTION_SEND), Import (OpenDocument) with a replace-all confirm dialog + "last backup" line.
+  Added one-shot `all*()` DAO queries for export.
+- **Release-prep (MQ-20):** real `MIGRATION_1_2` + `MIGRATION_2_3` (additive) replace destructive
+  fallback → no more data resets on upgrade (`fallbackToDestructiveMigrationOnDowngrade` only).
+  Optional **PIN lock**: `SettingsStore` PIN (SHA-256) + backup timestamp; `LockScreen`; PIN
+  controls in Settings; `AppState.Locked` gate on launch. Biometric deferred (needs FragmentActivity).
+- Nav drawer now 14 destinations (added Backup). 
 
 ## In-flight state
-- All new Kotlin brace-balanced, all 8 screen composables present; **not compiler-verified**
-  (no Android SDK in cloud). Watch for: material3 `HorizontalDivider`, drawer APIs, `produceState`
-  generics — all expected fine on compose-bom 2024.09.03 (material3 1.3.0).
-- Last known good: committed & pushed to `claude/ai-second-brain-rpg-dv5o75` (PR #2).
+- All new Kotlin brace-balanced; **not compiler-verified**. Notes: migrations are inert on Yash's
+  device (already v3) so they can't crash his upgrade; export/import uses standard SAF APIs.
+- Last known good: committed & pushed; PR #23 (now Phases 3–5).
 
 ## Next action (starts next session)
 - If Yash reports a compile error, fix first.
-- Else Phase 3 #13 Documents: NEW Room entities (documents/chunks/tags) → DB version bump (dev
-  destructive fallback already on). Import via file picker/share sheet; ML Kit on-device OCR for
-  images/scans; text for pdf/txt/md; chunk; award document_uploaded/document_processed. Then #14
-  (port hashing embeddings + Search), #15 (World Map on Canvas).
+- Otherwise the offline app is DONE. Options: (a) **merge PR #23 to main** (recommended — it's the
+  whole offline app), (b) polish/bugfix from device testing, (c) the still-pending cleanup:
+  move `backend/` + `frontend/` → `legacy/` (DECISIONS logged, never executed), (d) biometric
+  unlock, (e) real embedding model for better search, (f) Sarvam voice capture (STT) per the
+  Mind Quest profile — a genuinely new feature beyond the original backlog.
 
 ## Open questions / waiting on Yash
-- Does Phase 2 compile & run? (First build after adding Room was green, so KSP is set up.)
+- Does Phase 5 compile & run? Test: Settings → set a PIN → relaunch (should prompt) → remove PIN.
+  Backup → Save backup .json; Import it back. Everything should survive.
 
 ## Not yet done (tracked, deferred)
-- Move `backend/` + `frontend/` → `legacy/` (decision logged; still not executed — do opportunistically).
+- Move `backend/` + `frontend/` → `legacy/` (decision logged; still pending — optional cleanup).
+- PR #23 bundles Phases 3–5; merge when ready.
 
 ## Build constraint
-- No Kotlin compiler in cloud; each phase compiled by Yash in Android Studio. Small increments.
+- No Kotlin compiler in cloud; each phase compiled by Yash in Android Studio.

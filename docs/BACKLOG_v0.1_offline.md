@@ -27,20 +27,20 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #12 Personal Bests (offline replacement for Leaderboard).
 
 ## Phase 3 — Second brain (on-device)
-- [ ] #13 Documents ✅: import (file picker / share sheet), on-device OCR (ML Kit) for
+- [x] #13 Documents ✅: import (file picker / share sheet), on-device OCR (ML Kit) for
       images/scans, text extraction for pdf/txt/md, chunking.
-- [ ] #14 On-device embeddings (port hashing embeddings from `services/ai/hashing.py`) +
+- [x] #14 On-device embeddings (port hashing embeddings from `services/ai/hashing.py`) +
       local vector search table; Search screen ✅.
-- [ ] #15 World Map ✅ (knowledge graph: domains ↔ documents ↔ tags on Canvas).
+- [x] #15 World Map ✅ (knowledge graph: domains ↔ documents ↔ tags on Canvas).
 
 ## Phase 4 — Narrator + reviews (per DECISIONS pending item)
-- [ ] #16 Narrator ✅ per chosen strategy (retrieval-only offline v1; optional cloud key).
-- [ ] #17 Weekly Review ✅ (aggregate stats; narrative offline-templated or via optional key).
-- [ ] #18 AI quest generation (offline template pool; optional cloud key).
+- [x] #16 Narrator ✅ per chosen strategy (retrieval-only offline v1; optional cloud key).
+- [x] #17 Weekly Review ✅ (aggregate stats; narrative offline-templated or via optional key).
+- [x] #18 AI quest generation (offline template pool; optional cloud key).
 
 ## Phase 5 — Data ownership & polish
-- [ ] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").
-- [ ] #20 Optional PIN/biometric lock; backup reminder.
+- [x] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").
+- [x] #20 Optional PIN/biometric lock; backup reminder.
 
 ## Explicitly out (offline)
 - Multi-user accounts, JWT, cross-device sync, hosted leaderboard — dropped or deferred.

@@ -108,11 +108,41 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     var title by remember { mutableStateOf("") }
     var difficulty by remember { mutableStateOf("normal") }
 
+    val drafts = quests.filter { it.status == "draft" }
     val active = quests.filter { it.status == "active" }
     val done = quests.filter { it.status == "completed" }
+    var generating by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Quest Board", style = MaterialTheme.typography.headlineMedium, color = Parchment) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Quest Board", style = MaterialTheme.typography.headlineMedium, color = Parchment)
+                TextButton(enabled = !generating, onClick = {
+                    generating = true
+                    scope.launch {
+                        val n = repo.generateQuests(3)
+                        generating = false
+                        notify("The Questmaster drafted $n quest(s) — accept the ones you'll take.")
+                    }
+                }) { Text(if (generating) "…" else "🔮 Generate") }
+            }
+        }
+        if (drafts.isNotEmpty()) {
+            item { Text("Questmaster drafts", style = MaterialTheme.typography.titleMedium, color = Rune) }
+            items(drafts) { q ->
+                Card { Column(Modifier.padding(12.dp)) {
+                    Text(q.title, color = Parchment, fontWeight = FontWeight.Bold)
+                    q.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("${q.difficulty} · +${q.xpReward} XP", style = MaterialTheme.typography.labelSmall, color = Rune)
+                        Row {
+                            TextButton(onClick = { scope.launch { repo.abandonQuest(q.id) } }) { Text("Decline", color = Color.Gray) }
+                            Button(onClick = { scope.launch { repo.acceptQuest(q.id) } }) { Text("Accept") }
+                        }
+                    }
+                } }
+            }
+        }
         item {
             Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(title, { title = it }, label = { Text("New quest") }, singleLine = true, modifier = Modifier.fillMaxWidth())

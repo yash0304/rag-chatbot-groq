@@ -1,6 +1,7 @@
 package com.mindquest.app.data
 
 import androidx.room.Entity
+import kotlinx.serialization.Serializable
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -12,6 +13,7 @@ import androidx.room.PrimaryKey
  */
 
 @Entity(tableName = "profile")
+@Serializable
 data class ProfileEntity(
     @PrimaryKey val id: Int = 1, // single local hero
     val heroName: String,
@@ -22,6 +24,7 @@ data class ProfileEntity(
 )
 
 @Entity(tableName = "xp_events", indices = [Index("createdAt")])
+@Serializable
 data class XpEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val kind: String,
@@ -32,6 +35,7 @@ data class XpEventEntity(
 )
 
 @Entity(tableName = "quests")
+@Serializable
 data class QuestEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -47,6 +51,7 @@ data class QuestEntity(
 )
 
 @Entity(tableName = "habits")
+@Serializable
 data class HabitEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -62,6 +67,7 @@ data class HabitEntity(
     tableName = "habit_checkins",
     indices = [Index(value = ["habitId", "date"], unique = true)],
 )
+@Serializable
 data class HabitCheckinEntity(
     @PrimaryKey val id: String,
     val habitId: String,
@@ -70,6 +76,7 @@ data class HabitCheckinEntity(
 )
 
 @Entity(tableName = "goals")
+@Serializable
 data class GoalEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -80,6 +87,7 @@ data class GoalEntity(
 )
 
 @Entity(tableName = "milestones", indices = [Index("goalId")])
+@Serializable
 data class MilestoneEntity(
     @PrimaryKey val id: String,
     val goalId: String,
@@ -90,6 +98,7 @@ data class MilestoneEntity(
 )
 
 @Entity(tableName = "achievements")
+@Serializable
 data class AchievementEntity(
     @PrimaryKey val code: String,
     val name: String,
@@ -101,6 +110,7 @@ data class AchievementEntity(
 )
 
 @Entity(tableName = "skills")
+@Serializable
 data class SkillEntity(
     @PrimaryKey val code: String,
     val tree: String, // scholar|explorer|strategist|forger
@@ -113,6 +123,7 @@ data class SkillEntity(
 )
 
 @Entity(tableName = "collectibles")
+@Serializable
 data class CollectibleEntity(
     @PrimaryKey val code: String,
     val name: String,
@@ -120,4 +131,53 @@ data class CollectibleEntity(
     val lore: String,
     val acquiredAt: Long? = null, // null = not owned
     val source: String? = null,
+)
+
+@Entity(tableName = "documents")
+@Serializable
+data class DocumentEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val filename: String,
+    val mimeType: String,
+    val status: String = "processing", // processing|ready|failed
+    val error: String? = null,
+    val summary: String? = null,
+    val domain: String? = null,
+    val tagsCsv: String = "", // comma-separated tags (single-user; avoids a join table)
+    val ocrUsed: Boolean = false,
+    val charCount: Int = 0,
+    val chunkCount: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "chunks", indices = [Index("documentId")])
+@Serializable
+data class ChunkEntity(
+    @PrimaryKey val id: String,
+    val documentId: String,
+    val seq: Int,
+    val text: String,
+    val location: String? = null,
+    val vectorCsv: String, // comma-separated floats (hashing embedding, dim 256)
+)
+
+@Entity(tableName = "chat_messages", indices = [Index("createdAt")])
+@Serializable
+data class ChatMessageEntity(
+    @PrimaryKey val id: String,
+    val role: String, // user | assistant
+    val content: String,
+    val citationsJson: String = "[]", // JSON array of {index,title,snippet,location}
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(tableName = "weekly_reviews")
+@Serializable
+data class WeeklyReviewEntity(
+    @PrimaryKey val weekStart: String, // ISO yyyy-MM-dd (Monday)
+    val statsJson: String,
+    val narrative: String,
+    val suggestionsJson: String,
+    val createdAt: Long = System.currentTimeMillis(),
 )
