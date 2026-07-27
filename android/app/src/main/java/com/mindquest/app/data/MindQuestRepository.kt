@@ -10,6 +10,7 @@ import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
 import com.mindquest.app.domain.SarvamClient
+import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -437,32 +438,60 @@ class MindQuestRepository(private val context: Context) {
             if (fullText.isBlank()) {
                 error("No text could be extracted (a scanned file may have produced no OCR text).")
             }
-            val chunks = Ingestion.chunk(extracted.pages)
-            val summary = Ingestion.summarize(fullText)
-            val tags = Ingestion.tags(fullText)
-            val domain = Ingestion.domain(fullText)
-            documentDao.insertChunks(
-                chunks.map { (seq, text, loc) ->
-                    ChunkEntity(
-                        id = UUID.randomUUID().toString(), documentId = id, seq = seq, text = text,
-                        location = loc, vectorCsv = Embeddings.toCsv(Embeddings.embed(text)),
-                    )
-                },
-            )
-            documentDao.upsertDocument(
-                DocumentEntity(
-                    id = id, title = name, filename = name, mimeType = mime, status = "ready",
-                    summary = summary, domain = domain, tagsCsv = tags.joinToString(","),
-                    ocrUsed = extracted.ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
-                ),
-            )
-            award("document_processed", Catalogs.Xp.DOCUMENT_PROCESSED, refId = id)
+            ingest(id, name, mime, extracted.pages, extracted.ocrUsed)
         } catch (e: Exception) {
-            documentDao.getDocument(id)?.let {
-                documentDao.upsertDocument(it.copy(status = "failed", error = e.message?.take(2000)))
-            }
+            markFailed(id, e)
         }
         return id
+    }
+
+    /** Import raw text (e.g. a transcribed voice note) through the same pipeline. */
+    suspend fun importTextNote(title: String, text: String): String {
+        val id = UUID.randomUUID().toString()
+        val name = title.ifBlank { "Voice note" }
+        documentDao.upsertDocument(DocumentEntity(id = id, title = name, filename = name, mimeType = "text/plain", status = "processing"))
+        award("document_uploaded", Catalogs.Xp.DOCUMENT_UPLOADED, refId = id)
+        try {
+            ingest(id, name, "text/plain", listOf(1 to text), ocrUsed = false)
+        } catch (e: Exception) {
+            markFailed(id, e)
+        }
+        return id
+    }
+
+    private suspend fun ingest(id: String, name: String, mime: String, pages: List<Pair<Int, String>>, ocrUsed: Boolean) {
+        val fullText = pages.joinToString("\n\n") { it.second }
+        if (fullText.isBlank()) error("No text could be extracted (a scanned file may produce no OCR text).")
+        val chunks = Ingestion.chunk(pages)
+        documentDao.insertChunks(
+            chunks.map { (seq, text, loc) ->
+                ChunkEntity(
+                    id = UUID.randomUUID().toString(), documentId = id, seq = seq, text = text,
+                    location = loc, vectorCsv = Embeddings.toCsv(Embeddings.embed(text)),
+                )
+            },
+        )
+        documentDao.upsertDocument(
+            DocumentEntity(
+                id = id, title = name, filename = name, mimeType = mime, status = "ready",
+                summary = Ingestion.summarize(fullText), domain = Ingestion.domain(fullText),
+                tagsCsv = Ingestion.tags(fullText).joinToString(","),
+                ocrUsed = ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
+            ),
+        )
+        award("document_processed", Catalogs.Xp.DOCUMENT_PROCESSED, refId = id)
+    }
+
+    private suspend fun markFailed(id: String, e: Exception) {
+        documentDao.getDocument(id)?.let {
+            documentDao.upsertDocument(it.copy(status = "failed", error = e.message?.take(2000)))
+        }
+    }
+
+    /** Transcribe a recorded WAV via Sarvam, then import the text as a note. Requires a key. */
+    suspend fun transcribeAndImport(wav: File): String {
+        val transcript = sarvam.transcribe(wav)
+        return importTextNote("Voice note · ${LocalDate.now()}", transcript)
     }
 
     suspend fun deleteDocument(id: String) {

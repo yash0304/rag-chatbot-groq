@@ -1,45 +1,41 @@
-# HANDOFF — Mind Quest — 2026-07-21 (session 6)
+# HANDOFF — Mind Quest — 2026-07-21 (session 7)
 
 > Overwrite at the end of every session. Must let any model resume in under 2 minutes.
 
 ## Where we are
-- **Offline Android app is FEATURE-COMPLETE: 20/20 backlog items done.** Phases 0–2 merged to
-  main; Phases 3–5 on branch `claude/ai-second-brain-rpg-dv5o75` = **PR #23** (not yet merged).
-- Phase 5 (this session): data export/import + release-prep (real migrations, PIN lock).
-- All GitHub issues MQ-1..MQ-20 (#3–#22) closed.
+- Offline Android app is feature-complete AND merged to `main` (PR #23). This session added
+  three follow-ups on branch `claude/ai-second-brain-rpg-dv5o75` (new PR): status-bar fix,
+  web-stack archival, Sarvam voice capture.
+- Backlog: 20/20 core done; post-v0.1 #21–#23 done, #24 (biometric) + #25 (real embeddings) open.
 
-## What happened this session (Phase 5)
-- **Export/import (MQ-19):** all 14 entities made `@Serializable`; `ExportBundle` snapshot;
-  `exportJson` (pretty), `exportMarkdown` (readable summary), `importJson` (clearAllTables →
-  restore → seedIfEmpty). New `ui/DataScreen.kt`: Save backup (SAF CreateDocument), Share summary
-  (ACTION_SEND), Import (OpenDocument) with a replace-all confirm dialog + "last backup" line.
-  Added one-shot `all*()` DAO queries for export.
-- **Release-prep (MQ-20):** real `MIGRATION_1_2` + `MIGRATION_2_3` (additive) replace destructive
-  fallback → no more data resets on upgrade (`fallbackToDestructiveMigrationOnDowngrade` only).
-  Optional **PIN lock**: `SettingsStore` PIN (SHA-256) + backup timestamp; `LockScreen`; PIN
-  controls in Settings; `AppState.Locked` gate on launch. Biometric deferred (needs FragmentActivity).
-- Nav drawer now 14 destinations (added Backup). 
+## What happened this session
+- **UI fix:** Android-15 edge-to-edge drew the top bar + drawer under the status-bar clock →
+  `statusBarsPadding()` on both (MainActivity).
+- **Merged PR #23** (Phases 3–5) into main.
+- **Archived web stack:** moved `backend/`, `frontend/`, `docker-compose.yml`, `Makefile`,
+  `.env.example` → `legacy/`. Updated `.github/workflows/ci.yml` to `legacy/*` paths and root
+  `README.md` to lead with the Android app. Repo root is now just `android/`, `docs/`, `legacy/`.
+- **Sarvam voice capture:** `RECORD_AUDIO` permission; `domain/WavRecorder.kt` (AudioRecord →
+  16 kHz mono WAV); `SarvamClient.transcribe()` (multipart to `/speech-to-text`, saarika:v2,
+  language auto); Repository `importTextNote` + shared `ingest()` refactor + `transcribeAndImport`;
+  Archives screen 🎤 button + permission + recording/transcribing status. Needs a Sarvam key;
+  offline it just tells the user to add one.
 
 ## In-flight state
-- All new Kotlin brace-balanced; **not compiler-verified**. Notes: migrations are inert on Yash's
-  device (already v3) so they can't crash his upgrade; export/import uses standard SAF APIs.
-- Last known good: committed & pushed; PR #23 (now Phases 3–5).
+- All new Kotlin brace-balanced; **not compiler-verified**. Highest-risk (untested Android APIs):
+  `AudioRecord`/WAV recording, Sarvam STT multipart endpoint, `RequestPermission` flow. All wrapped
+  in try/catch → user-visible error, no crash. STT endpoint/model may need a docs.sarvam.ai check.
+- Last known good: committed & pushed; new PR open.
 
 ## Next action (starts next session)
-- If Yash reports a compile error, fix first.
-- Otherwise the offline app is DONE. Options: (a) **merge PR #23 to main** (recommended — it's the
-  whole offline app), (b) polish/bugfix from device testing, (c) the still-pending cleanup:
-  move `backend/` + `frontend/` → `legacy/` (DECISIONS logged, never executed), (d) biometric
-  unlock, (e) real embedding model for better search, (f) Sarvam voice capture (STT) per the
-  Mind Quest profile — a genuinely new feature beyond the original backlog.
+- If Yash reports a compile/runtime error, fix first (voice recording + STT are the likely spots).
+- Otherwise open items: #24 biometric unlock (switch MainActivity to FragmentActivity + androidx.biometric),
+  #25 real on-device embedding model (ONNX/TFLite sentence-transformer) for better search.
 
 ## Open questions / waiting on Yash
-- Does Phase 5 compile & run? Test: Settings → set a PIN → relaunch (should prompt) → remove PIN.
-  Backup → Save backup .json; Import it back. Everything should survive.
-
-## Not yet done (tracked, deferred)
-- Move `backend/` + `frontend/` → `legacy/` (decision logged; still pending — optional cleanup).
-- PR #23 bundles Phases 3–5; merge when ready.
+- Does this build compile & run? Test the 🎤 in Archives (with a Sarvam key): record a sentence →
+  Stop → it should transcribe and appear as a "Voice note" document. Confirm status bar no longer
+  overlaps the clock.
 
 ## Build constraint
-- No Kotlin compiler in cloud; each phase compiled by Yash in Android Studio.
+- No Kotlin compiler in cloud; each change compiled by Yash in Android Studio.

@@ -18,6 +18,13 @@ own phone doesn't need account login; it was pure friction — the source of the
 board is inherently online/multi-user; offline it's replaced by personal records (best streak,
 level milestones, totals). (Keeps the screen useful without a server.)
 
+2026-07-21 — [ARCH] **Web stack archived to `legacy/`; voice capture added.** Moved
+`backend/`, `frontend/`, `docker-compose.yml`, `Makefile`, `.env.example` under `legacy/`
+(CI + README updated to the new paths). Added Sarvam **speech-to-text voice notes** (record WAV
+on-device → Saarika STT → import as a document) and fixed the Android-15 edge-to-edge status-bar
+overlap (`statusBarsPadding` on top bar + drawer). Voice needs a Sarvam key; STT endpoint
+`https://api.sarvam.ai/speech-to-text`, model `saarika:v2` — verify at docs.sarvam.ai if it 4xx.
+
 2026-07-21 — [DB] **Real Room migrations replace destructive fallback (MQ-20).** Added additive
 `MIGRATION_1_2` (documents+chunks) and `MIGRATION_2_3` (chat+reviews); builder now uses
 `addMigrations(...)` + `fallbackToDestructiveMigrationOnDowngrade()`. Upgrades preserve data.

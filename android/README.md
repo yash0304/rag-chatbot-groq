@@ -39,6 +39,8 @@ First launch asks for a hero name and creates a local profile. Everything else i
 - [x] Phase 3 — Documents (on-device OCR), Search, World Map
 - [x] Phase 4 — Narrator + Weekly Review + AI quest generation via Sarvam (optional)
 - [x] Phase 5 — Data export/import (JSON + Markdown), real DB migrations, optional PIN lock
+- [x] Post-v0.1 — web stack archived to `legacy/`; status-bar inset fix; **Sarvam voice notes**
+      (🎤 in Archives: record → Saarika speech-to-text → imported as a document; needs a Sarvam key)
 
 ## Notes
 - Pre-release, the DB uses `fallbackToDestructiveMigration()` — schema changes wipe local data.

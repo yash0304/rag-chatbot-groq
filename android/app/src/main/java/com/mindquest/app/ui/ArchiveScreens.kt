@@ -1,5 +1,6 @@
 package com.mindquest.app.ui
 
+import android.Manifest
 import android.graphics.Paint
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,12 +17,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.GraphData
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.SearchHit
+import com.mindquest.app.domain.WavRecorder
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -35,9 +39,14 @@ private val StatusColor = mapOf(
 @Composable
 fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val docs by repo.observeDocuments().collectAsState(emptyList())
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
+
+    val recorder = remember { WavRecorder() }
+    var recording by remember { mutableStateOf(false) }
+    var transcribing by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
@@ -46,23 +55,60 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         }
     }
 
+    fun startRecording() {
+        try {
+            recorder.start(File(context.cacheDir, "voice-${System.currentTimeMillis()}.wav"))
+            recording = true
+        } catch (e: Exception) {
+            notify("Cannot record: ${e.message}")
+        }
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRecording() else notify("Microphone permission is needed for voice notes.")
+    }
+    fun onMic() {
+        if (!repo.aiConfigured()) { notify("Add a Sarvam key in Settings to use voice notes."); return }
+        if (recording) {
+            recording = false
+            val wav = recorder.stop()
+            if (wav != null) {
+                transcribing = true
+                scope.launch {
+                    try { repo.transcribeAndImport(wav); notify("Voice note transcribed & added.") }
+                    catch (e: Exception) { notify("Voice note failed: ${e.message}") }
+                    finally { transcribing = false }
+                }
+            }
+        } else {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("The Archives", style = MaterialTheme.typography.headlineMedium, color = Parchment)
-                Button(onClick = {
-                    picker.launch(
-                        arrayOf(
-                            "application/pdf",
-                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-                            "application/msword", // .doc (shown; handled with a helpful message)
-                            "text/*", // .txt, .md, .csv, .log, …
-                            "image/*",
-                        ),
-                    )
-                }) { Text("＋ Upload") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { onMic() }) { Text(if (recording) "⏹ Stop" else "🎤") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        picker.launch(
+                            arrayOf(
+                                "application/pdf",
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+                                "application/msword", // .doc (shown; handled with a helpful message)
+                                "text/*", // .txt, .md, .csv, .log, …
+                                "image/*",
+                            ),
+                        )
+                    }) { Text("＋ Upload") }
+                }
             }
             Text("PDF, Word (.docx), text, markdown, images — OCR & embeddings on-device.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            when {
+                recording -> Text("● Recording… tap Stop when done.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFF87171))
+                transcribing -> Text("Transcribing your note via Sarvam…", style = MaterialTheme.typography.bodySmall, color = Rune)
+            }
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
