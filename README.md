@@ -10,8 +10,10 @@ original — no copyrighted game assets, characters, music, or storylines.
 [![CI](https://github.com/yash0304/rag-chatbot-groq/actions/workflows/ci.yml/badge.svg)](../../actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-> This repository began as a Streamlit RAG chatbot; that original app is preserved in
-> [`legacy/streamlit-rag/`](legacy/streamlit-rag/). Everything else is the MindQuest platform.
+> **The active product is the fully offline Android app** in [`android/`](android/) — Kotlin +
+> Jetpack Compose + Room, no server required. The original web stack (FastAPI + Next.js) is
+> **archived** under [`legacy/`](legacy/) and no longer maintained (see `docs/DECISIONS.md`).
+> The repo also began as a Streamlit RAG demo, preserved in [`legacy/streamlit-rag/`](legacy/streamlit-rag/).
 
 ---
 
@@ -19,69 +21,42 @@ original — no copyrighted game assets, characters, music, or storylines.
 
 | Piece | Stack | Path |
 |---|---|---|
-| API | FastAPI · SQLAlchemy 2 · PostgreSQL · Qdrant · Redis | [`backend/`](backend/) |
-| Web app | Next.js 14 · TypeScript · Tailwind CSS | [`frontend/`](frontend/) |
-| Android companion | Kotlin · Jetpack Compose | [`android/`](android/) |
-| Infra | Docker Compose · GitHub Actions CI | [`docker-compose.yml`](docker-compose.yml) · [`.github/workflows/`](.github/workflows/) |
-| AI | OpenAI **Responses API** / Groq / offline stub — one pluggable interface | [`backend/app/services/ai/`](backend/app/services/ai/) |
+| **Android app (active)** | Kotlin · Jetpack Compose · Room (on-device) | [`android/`](android/) |
+| AI (optional) | Sarvam AI for chat / reviews / quest-gen; on-device hashing embeddings + ML Kit OCR | [`android/app/src/main/java/com/mindquest/app/domain/`](android/) |
+| _Archived_ web API | FastAPI · PostgreSQL · Qdrant · Redis | [`legacy/backend/`](legacy/backend/) |
+| _Archived_ web app | Next.js 14 · TypeScript · Tailwind | [`legacy/frontend/`](legacy/frontend/) |
 
-**Product features:** JWT auth (rotating refresh tokens) · document pipeline (extraction,
-OCR fallback, chunking, AI summary/tags/domain, embeddings) · semantic search ·
-citation-aware RAG chat · quests with difficulty-scaled XP · AI quest generation · habits
-with streak multipliers · goals as story arcs · achievements, 4 skill trees, collectibles ·
-knowledge-graph world map · analytics · AI weekly reviews · opt-in leaderboard ·
-rate limiting, security headers, tenant isolation · 54 backend tests + frontend tests, all
-runnable offline.
+**Android app (offline, feature-complete):** local hero profile · dashboard · quests with
+difficulty-scaled XP · habits with streak multipliers · goals as story arcs · 4 skill trees ·
+achievements + collectibles · analytics + activity heatmap · personal bests · document import
+with on-device OCR (ML Kit) · offline semantic search · knowledge-graph world map · citation-aware
+Narrator (retrieval offline, Sarvam when keyed) · weekly review · AI quest generation · full
+data export/import · optional PIN lock. Progression math is a direct Kotlin port of the archived
+backend, so numbers match. See [`android/README.md`](android/README.md) and
+[`docs/BACKLOG_v0.1_offline.md`](docs/BACKLOG_v0.1_offline.md).
 
-## Documentation (written before the code)
+## Run the Android app
 
-1. [Product Requirements (PRD)](docs/PRD.md)
-2. [Architecture](docs/ARCHITECTURE.md)
-3. [Database schema](docs/DATABASE_SCHEMA.md)
-4. [API specification](docs/API_SPECIFICATION.md)
-5. [Testing strategy](docs/TESTING_STRATEGY.md)
-6. [Deployment guide](docs/DEPLOYMENT.md)
-7. [Security checklist](docs/SECURITY.md)
+Open the [`android/`](android/) folder in Android Studio, let Gradle sync, and Run ▶ on an
+emulator or device. First launch asks for a hero name — then everything is offline, on-device.
+No server, no Docker, no login. To enable the AI Narrator/reviews/quest-generation, add your
+**Sarvam API key** in the app's Settings; without it those features fall back to offline
+retrieval/templates. Full guide: [`android/README.md`](android/README.md).
 
-## Quick start
+## Project docs
 
-### Full stack (Docker)
+- Offline app: [`docs/BACKLOG_v0.1_offline.md`](docs/BACKLOG_v0.1_offline.md) ·
+  [`docs/DECISIONS.md`](docs/DECISIONS.md) · [`docs/HANDOFF.md`](docs/HANDOFF.md)
+- Archived web stack (historical): [`docs/PRD.md`](docs/PRD.md),
+  [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md),
+  [`API_SPECIFICATION.md`](docs/API_SPECIFICATION.md), [`DEPLOYMENT.md`](docs/DEPLOYMENT.md),
+  [`SECURITY.md`](docs/SECURITY.md) — these describe the FastAPI/Next.js app now under `legacy/`.
 
-```bash
-cp .env.example .env       # optionally add OPENAI_API_KEY / GROQ_API_KEY
-docker compose up --build
-# web http://localhost:3000 · API docs http://localhost:8000/docs
-```
+## Archived web stack
 
-With no keys, `AI_PROVIDER=stub` runs the entire product offline with a deterministic
-AI provider — ideal for trying the loop end to end.
-
-### Local dev (no Docker)
-
-```bash
-# API — SQLite + in-memory vectors + stub AI by default
-cd backend
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-uvicorn app.main:app --reload            # http://localhost:8000/docs
-
-# Web
-cd frontend && npm install && npm run dev # http://localhost:3000
-```
-
-### Tests
-
-```bash
-cd backend && pytest -q          # 54 tests, fully offline
-cd frontend && npm run test && npm run typecheck && npm run build
-```
-
-## Switching AI providers
-
-Set `AI_PROVIDER` to `openai` (Responses API + real embeddings), `groq`
-(fast Llama chat; hashing-embedding fallback), or `stub` (offline). The interface lives in
-`backend/app/services/ai/provider.py` — adding a provider means implementing `embed()` and
-`complete()`.
+The original web app + API still run from [`legacy/`](legacy/):
+`cp legacy/.env.example legacy/.env && docker compose -f legacy/docker-compose.yml up --build`
+(web on :3000, API on :8000). It is no longer maintained — the Android app is the product.
 
 ## How progression works (the honest-XP rule)
 

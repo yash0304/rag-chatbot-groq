@@ -42,5 +42,12 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #19 Export / import all data as JSON + Markdown ("his data must outlive the app").
 - [x] #20 Optional PIN/biometric lock; backup reminder.
 
+## Beyond v0.1 (post-completion)
+- [x] #21 Archive web stack (backend/ + frontend/) to `legacy/`; Android-only.
+- [x] #22 Fix Android-15 edge-to-edge status-bar overlap (top bar + drawer insets).
+- [x] #23 Sarvam voice capture — record on-device → Saarika STT → import as a note.
+- [ ] #24 Biometric unlock (needs FragmentActivity) — PIN shipped; biometric deferred.
+- [ ] #25 Real embedding model for sharper search (optional upgrade over hashing embeddings).
+
 ## Explicitly out (offline)
 - Multi-user accounts, JWT, cross-device sync, hosted leaderboard — dropped or deferred.
