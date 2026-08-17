@@ -23,7 +23,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(primary = Rune, background = Abyss, surface = Realm),
+                colorScheme = lightColorScheme(
+                    primary = Rune,
+                    onPrimary = Abyss,
+                    secondary = Brass,
+                    background = Abyss,
+                    onBackground = Parchment,
+                    surface = Realm,
+                    onSurface = Parchment,
+                ),
             ) {
                 MindQuestApp()
             }
