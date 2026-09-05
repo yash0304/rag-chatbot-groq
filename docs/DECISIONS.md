@@ -3,6 +3,27 @@
 Newest first. Format: `YYYY-MM-DD — [AREA] Decision. (Why.)`
 Never delete a superseded decision — add a new dated line.
 
+2026-09-05 — [SCOPE] **Errands are notes, not documents — new Inbox screen (MQ-26).** Yash asked
+for a chat window where short lines ("call the plumber", "milk, eggs, rice") get captured and can
+alert him on a date. Rather than pushing every scribble through the document pipeline (OCR →
+chunk → embed → World Map), quick capture gets its own lightweight `notes` table and a chat-style
+Inbox. A note can then *graduate*: "→ Quest" makes it a real quest that pays XP, "→ Archive" runs
+it through the document pipeline so it becomes searchable and shows on the map. (Keeps the
+Archives meaningful — grocery lists would otherwise pollute search and the knowledge graph —
+while making the fast path for a passing thought one tap.)
+
+2026-09-05 — [TECH] **Reminders use WorkManager, not AlarmManager.** A note's reminder is a
+`OneTimeWorkRequest` tagged `note-reminder-<id>`, so it survives app death and reboot without a
+`RECEIVE_BOOT_COMPLETED` receiver, and cancels cleanly when the note is completed or deleted.
+Exact-alarm permissions (`SCHEDULE_EXACT_ALARM`) are deliberately avoided — a reminder that fires
+within a few minutes of its time is fine for errands, and Play Store policy on exact alarms is
+restrictive. Notifications need runtime `POST_NOTIFICATIONS` on API 33+; the Inbox asks the first
+time a reminder is set, and a missing permission degrades to a silent no-op rather than a crash.
+
+2026-09-05 — [DB] **DB v4 with additive `MIGRATION_3_4` (notes table).** No destructive fallback —
+Yash now has real data on the device. Notes are included in the JSON export/import bundle so they
+outlive the app like everything else.
+
 2026-07-20 — [ARCH] **Pivot to offline-first Android app.** The Android app becomes the
 primary product and runs fully on-device with no backend server: all logic (auth,
 gamification/XP, quests, habits, goals, documents, search) reimplemented in Kotlin against a

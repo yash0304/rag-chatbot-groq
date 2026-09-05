@@ -59,6 +59,10 @@ dependencies {
     // On-device OCR (offline, bundled Latin model) — Phase 3 documents
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
+    // Reminder notifications for inbox notes (survives reboot)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.core:core-ktx:1.13.1")
+
     // Sarvam AI (Phase 4) + JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

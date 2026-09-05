@@ -9,6 +9,7 @@ import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
+import com.mindquest.app.domain.Reminders
 import com.mindquest.app.domain.SarvamClient
 import java.io.File
 import java.time.Instant
@@ -100,6 +101,7 @@ data class ExportBundle(
     val chunks: List<ChunkEntity> = emptyList(),
     val chat: List<ChatMessageEntity> = emptyList(),
     val reviews: List<WeeklyReviewEntity> = emptyList(),
+    val notes: List<NoteEntity> = emptyList(),
 )
 
 /**
@@ -117,6 +119,7 @@ class MindQuestRepository(private val context: Context) {
     private val documentDao = db.documentDao()
     private val chatDao = db.chatDao()
     private val reviewDao = db.reviewDao()
+    private val noteDao = db.noteDao()
     private val json = Json { ignoreUnknownKeys = true }
 
     val settings = SettingsStore(context)
@@ -693,6 +696,7 @@ class MindQuestRepository(private val context: Context) {
         chunks = documentDao.allChunks(),
         chat = chatDao.allMessages(),
         reviews = reviewDao.allReviews(),
+        notes = noteDao.allNotes(),
     )
 
     suspend fun exportJson(): String {
@@ -741,10 +745,70 @@ class MindQuestRepository(private val context: Context) {
         if (bundle.chunks.isNotEmpty()) documentDao.insertChunks(bundle.chunks)
         bundle.chat.forEach { chatDao.insert(it) }
         bundle.reviews.forEach { reviewDao.upsert(it) }
+        bundle.notes.forEach { noteDao.upsert(it) }
         seedIfEmpty() // restore catalog rows if the bundle predates them
         return bundle.xpEvents.size + bundle.quests.size + bundle.habits.size +
             bundle.goals.size + bundle.documents.size
     }
 
     fun lastBackup(): Long = settings.lastBackup()
+
+    // ---------- inbox: quick-capture notes ----------
+
+    fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeNotes()
+
+    /** Capture a line of text; optionally schedule a reminder notification. */
+    suspend fun addNote(text: String, remindAt: Long? = null): String {
+        val id = UUID.randomUUID().toString()
+        noteDao.upsert(NoteEntity(id = id, text = text.trim(), remindAt = remindAt))
+        if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
+        return id
+    }
+
+    suspend fun setNoteDone(id: String, done: Boolean) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(done = done))
+        if (done) Reminders.cancel(context, id) // no point nagging about a finished errand
+    }
+
+    /** Set or clear a note's reminder, rescheduling the notification. */
+    suspend fun setNoteReminder(id: String, remindAt: Long?) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(remindAt = remindAt))
+        Reminders.cancel(context, id)
+        if (remindAt != null) Reminders.schedule(context, id, note.text, remindAt)
+    }
+
+    suspend fun deleteNote(id: String) {
+        Reminders.cancel(context, id)
+        noteDao.delete(id)
+    }
+
+    /** Promote a note into a real quest (so finishing it earns XP). */
+    suspend fun noteToQuest(id: String, difficulty: String = "easy"): Boolean {
+        val note = noteDao.get(id) ?: return false
+        if (note.questId != null) return false
+        val diff = if (difficulty in Catalogs.difficultyXp) difficulty else "easy"
+        val questId = UUID.randomUUID().toString()
+        questDao.upsert(
+            QuestEntity(
+                id = questId, title = note.text.take(255), difficulty = diff,
+                xpReward = Catalogs.difficultyXp.getValue(diff), status = "active",
+                source = "manual", dueAt = note.remindAt,
+            ),
+        )
+        noteDao.upsert(note.copy(questId = questId))
+        return true
+    }
+
+    /** Keep a note permanently: run it through the document pipeline so it becomes searchable. */
+    suspend fun noteToArchive(id: String): Boolean {
+        val note = noteDao.get(id) ?: return false
+        if (note.docId != null) return false
+        val docId = importTextNote(note.text.take(60), note.text)
+        noteDao.upsert(note.copy(docId = docId))
+        return true
+    }
+
+    suspend fun openNoteCount(): Int = noteDao.openCount()
 }
