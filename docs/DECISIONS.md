@@ -3,6 +3,25 @@
 Newest first. Format: `YYYY-MM-DD — [AREA] Decision. (Why.)`
 Never delete a superseded decision — add a new dated line.
 
+2026-09-05 — [BUILD] **APKs are built by GitHub Actions; sideload build type is `.ci`.** Yash was
+travelling with no laptop and needed to update the app from his phone. A CI-built APK can never
+install over an Android-Studio build (different signing key → `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
+and the only way through is uninstalling, which wipes data). So the CI build carries
+`applicationIdSuffix = ".ci"` and installs as a *separate* app: the existing install is never at
+risk, and data moves across via the app's own JSON export/import. The workflow publishes a Release
+so the APK is a direct tap-to-install link on the phone. (Side benefit, and a big one: this is the
+first real Kotlin compiler in the loop — previously nothing was compile-verified in the cloud
+session, only brace-balanced. CI now catches compile errors before Yash ever pulls.)
+
+2026-09-05 — [SECURITY] **Signing key lives in GitHub Actions secrets, never in the repo.** The
+repo is public, so a committed keystore would let anyone sign an "update" to this app. Two secrets:
+`SIDELOAD_KEYSTORE_BASE64` + `SIDELOAD_KEYSTORE_PASSWORD`. Local builds fall back to the debug key,
+so nothing about the Android Studio workflow changes. Without the secrets CI still compiles but
+publishes no Release — a throwaway key would produce an APK that can never be updated in place.
+
+2026-09-05 — [BUILD] **Gradle pinned 9.0-milestone-1 → 8.9.** AGP 8.5.2 does not support a Gradle 9
+milestone; it would have broken the CI build and was a latent local hazard too.
+
 2026-09-05 — [SCOPE] **Errands are notes, not documents — new Inbox screen (MQ-26).** Yash asked
 for a chat window where short lines ("call the plumber", "milk, eggs, rice") get captured and can
 alert him on a date. Rather than pushing every scribble through the document pipeline (OCR →

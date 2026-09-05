@@ -29,11 +29,24 @@
   - Deps: `androidx.work:work-runtime-ktx`, `androidx.core:core-ktx`; manifest
     `POST_NOTIFICATIONS`.
 
+- **GitHub Actions now builds installable APKs** (`.github/workflows/android-apk.yml`) — Yash was
+  travelling with no laptop. New `sideload` build type, `applicationIdSuffix ".ci"`, so it installs
+  ALONGSIDE the Android Studio build and can't endanger existing data. Signing key comes from repo
+  secrets (public repo — nothing committed); no secrets = compile-only, no Release published.
+  Gradle wrapper pinned 9.0-milestone-1 → 8.9 (AGP 8.5.2 doesn't support Gradle 9).
+
 ## In-flight state
-- All new Kotlin brace/paren-balanced and reference-checked; **not compiler-verified** (no Kotlin
-  compiler in the cloud session). Highest-risk spots: `WorkManager` scheduling, the native
-  DatePicker→TimePicker chain, the `POST_NOTIFICATIONS` runtime request.
+- **The Inbox code now compiles** — run 1 of the APK workflow went green (~4 min, 38 MB APK).
+  This is the first real Kotlin compiler in the loop; before this, cloud changes were only
+  brace-balanced. Runtime behaviour is still unverified: `WorkManager` scheduling, the native
+  DatePicker→TimePicker chain, the `POST_NOTIFICATIONS` request.
 - Committed & pushed to `claude/ai-second-brain-rpg-dv5o75`.
+- **Blocked on Yash:** add secrets `SIDELOAD_KEYSTORE_BASE64` + `SIDELOAD_KEYSTORE_PASSWORD`
+  (Settings → Secrets and variables → Actions), then Actions → Android APK → Run workflow. The
+  keystore was generated in session 8; if lost, generate a new one and redo the export/import.
+- Data migration to the `.ci` app: export JSON from the old app → install new APK (installs
+  alongside) → import → verify → only then delete the old app. Sarvam key + PIN are NOT in the
+  export bundle (EncryptedSharedPreferences) and must be re-entered.
 
 ## Next action (starts next session)
 - If Yash reports a compile/runtime error, fix that first.
