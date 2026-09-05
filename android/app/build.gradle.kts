@@ -20,10 +20,40 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000\"")
     }
 
+    // Sideload signing: CI writes the keystore to this path from a repo secret. Without it
+    // (i.e. any local build) we fall back to the debug key so nothing breaks.
+    val sideloadStore = rootProject.file("sideload.keystore")
+    val sideloadPassword = System.getenv("SIDELOAD_KEYSTORE_PASSWORD")
+    val hasSideloadKey = sideloadStore.exists() && !sideloadPassword.isNullOrBlank()
+
+    signingConfigs {
+        if (hasSideloadKey) {
+            create("sideload") {
+                storeFile = sideloadStore
+                storePassword = sideloadPassword
+                keyAlias = System.getenv("SIDELOAD_KEY_ALIAS") ?: "mindquest"
+                keyPassword = System.getenv("SIDELOAD_KEY_PASSWORD") ?: sideloadPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+        // APK built by GitHub Actions and installed by hand. Installs alongside the
+        // Android-Studio build (`.ci` suffix) so switching over never risks existing data.
+        create("sideload") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".ci"
+            versionNameSuffix = "-ci"
+            isMinifyEnabled = false
+            signingConfig = if (hasSideloadKey) {
+                signingConfigs.getByName("sideload")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
     buildFeatures {

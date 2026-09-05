@@ -1,0 +1,91 @@
+name: Android APK
+
+# Builds an installable APK entirely on GitHub — no laptop needed. The result is attached
+# to a Release so it can be downloaded and installed straight from the phone.
+#
+# The "sideload" build type carries the `.ci` application-id suffix, so it installs
+# ALONGSIDE any Android Studio build rather than replacing it. Nothing is ever at risk.
+#
+# Signing: set two repository secrets (Settings → Secrets and variables → Actions):
+#   SIDELOAD_KEYSTORE_BASE64    base64 of the keystore file
+#   SIDELOAD_KEYSTORE_PASSWORD  its password
+# Without them the build still runs (to check the code compiles) but publishes no Release,
+# because a throwaway key would produce an APK that can never be updated in place.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore signing keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIDELOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > android/sideload.keystore
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Keystore restored — this APK can update the previous one in place."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No SIDELOAD_KEYSTORE_BASE64 secret. Compiling only; no Release will be published."
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          SIDELOAD_KEYSTORE_PASSWORD: ${{ secrets.SIDELOAD_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleSideload
+
+      - name: Stage APK
+        id: apk
+        run: |
+          src=android/app/build/outputs/apk/sideload/app-sideload.apk
+          test -f "$src" || { echo "APK not found at $src"; find android/app/build/outputs -name '*.apk'; exit 1; }
+          out="MindQuest-${{ github.run_number }}.apk"
+          cp "$src" "$out"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+          ls -lh "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MindQuest-apk-${{ github.run_number }}
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Publish Release
+        if: steps.keystore.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" \
+            --title "MindQuest APK #${{ github.run_number }}" \
+            --target "${{ github.sha }}" \
+            --notes "Built from \`${{ github.ref_name }}\` (${{ github.sha }}).
+
+          Installs as a separate app (\`com.mindquest.app.ci\`) alongside any Android Studio build.
+          Download the .apk below on your phone and tap it to install." \
+            "${{ steps.apk.outputs.path }}"
+          echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/latest"

@@ -40,3 +40,9 @@ android/.idea/
 .DS_Store
 .idea/
 .vscode/
+
+# Android sideload signing key (never commit — public repo)
+sideload.keystore
+android/sideload.keystore
+android/app/build/
+android/.gradle/
