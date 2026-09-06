@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -31,7 +30,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 private val StatusColor = mapOf(
-    "ready" to Color(0xFF6EE7B7), "processing" to Rune, "failed" to Color(0xFFF87171),
+    "ready" to Verdant, "processing" to Rune, "failed" to Ember,
 )
 
 // ---------- Archives (documents + semantic search) ----------
@@ -104,9 +103,9 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     }) { Text("＋ Upload") }
                 }
             }
-            Text("PDF, Word (.docx), text, markdown, images — OCR & embeddings on-device.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("PDF, Word (.docx), text, markdown, images — OCR & embeddings on-device.", style = MaterialTheme.typography.bodySmall, color = Muted)
             when {
-                recording -> Text("● Recording… tap Stop when done.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFF87171))
+                recording -> Text("● Recording… tap Stop when done.", style = MaterialTheme.typography.bodySmall, color = Ember)
                 transcribing -> Text("Transcribing your note via Sarvam…", style = MaterialTheme.typography.bodySmall, color = Rune)
             }
         }
@@ -122,7 +121,7 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         }
         results?.let { hits ->
             item { Text("Semantic results", style = MaterialTheme.typography.titleSmall, color = Rune) }
-            if (hits.isEmpty()) item { Text("The archives hold nothing on this — yet.", color = Color.Gray) }
+            if (hits.isEmpty()) item { Text("The archives hold nothing on this — yet.", color = Muted) }
             items(hits) { h ->
                 Card { Column(Modifier.padding(12.dp)) {
                     Text("${h.title}${h.location?.let { " · $it" } ?: ""} · ${"%.2f".format(h.score)}", style = MaterialTheme.typography.labelSmall, color = Rune)
@@ -131,22 +130,22 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             }
         }
         item { Text("Documents", style = MaterialTheme.typography.titleMedium, color = Rune) }
-        if (docs.isEmpty()) item { Text("The shelves are empty. Upload your first tome.", color = Color.Gray) }
+        if (docs.isEmpty()) item { Text("The shelves are empty. Upload your first tome.", color = Muted) }
         items(docs) { d ->
             Card { Column(Modifier.padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(d.title, color = Parchment, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text(d.status, color = StatusColor[d.status] ?: Color.Gray, style = MaterialTheme.typography.labelSmall)
+                    Text(d.status, color = StatusColor[d.status] ?: Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 d.domain?.let { Text("🗺️ $it", style = MaterialTheme.typography.labelSmall, color = Rune) }
-                d.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
-                d.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFF87171)) }
+                d.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Muted) }
+                d.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Ember) }
                 if (d.tagsCsv.isNotBlank()) {
-                    Text(d.tagsCsv.split(",").joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    Text(d.tagsCsv.split(",").joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Muted)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${d.chunkCount} passages${if (d.ocrUsed) " · OCR" else ""}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    TextButton(onClick = { scope.launch { repo.deleteDocument(d.id) } }) { Text("delete", color = Color(0xFFF87171)) }
+                    Text("${d.chunkCount} passages${if (d.ocrUsed) " · OCR" else ""}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    TextButton(onClick = { scope.launch { repo.deleteDocument(d.id) } }) { Text("delete", color = Ember) }
                 }
             } }
         }
@@ -163,26 +162,26 @@ fun WorldMapScreen(repo: MindQuestRepository, refreshKey: Int) {
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("World Map", style = MaterialTheme.typography.headlineMedium, color = Parchment)
-        Text("🟡 domains · 🔵 documents · ⚪ tags", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        Text("🟠 domains · 🔵 documents · ⚪ tags", style = MaterialTheme.typography.bodySmall, color = Muted)
         Spacer(Modifier.height(12.dp))
         val g = graph
         if (g == null || g.nodes.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Blank parchment. Upload documents to chart your first territory.", color = Color.Gray)
+                Text("Blank parchment. Upload documents to chart your first territory.", color = Muted)
             }
         } else {
             Canvas(Modifier.fillMaxSize()) {
                 val pos = ringLayout(g, size.width, size.height)
                 g.edges.forEach { e ->
                     val s = pos[e.source]; val t = pos[e.target]
-                    if (s != null && t != null) drawLine(Color(0x33CBD5E1), s, t, strokeWidth = 1.5f)
+                    if (s != null && t != null) drawLine(Hairline, s, t, strokeWidth = 1.5f)
                 }
                 g.nodes.forEach { n ->
                     val p = pos[n.id] ?: return@forEach
                     val col = when (n.type) {
                         "domain" -> Rune
-                        "document" -> Color(0xFF7DD3FC)
-                        else -> Color(0xFF64748B)
+                        "document" -> NodeDocument
+                        else -> NodeTag
                     }
                     val r = when (n.type) { "domain" -> 12f + n.size * 2; "document" -> 9f; else -> 5f }
                     drawCircle(col, r, p)

@@ -9,13 +9,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.WeeklyReviewEntity
+import com.mindquest.app.domain.BiometricLock
 import kotlinx.coroutines.launch
 
 // ---------- Narrator (chat) ----------
@@ -39,7 +40,7 @@ fun NarratorScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 Text("The Narrator", style = MaterialTheme.typography.headlineMedium, color = Parchment)
                 Text(
                     if (aiOn) "Answers from your archives, via Sarvam." else "Retrieval mode — add a Sarvam key in Settings for spoken answers.",
-                    style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall, color = Muted,
                 )
             }
             if (messages.isNotEmpty()) TextButton(onClick = { scope.launch { repo.clearChat() } }) { Text("Clear") }
@@ -48,7 +49,7 @@ fun NarratorScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 
         LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (messages.isEmpty()) item {
-                Text("Ask the Narrator about anything you've archived. Every answer cites your own documents.", color = Color.Gray)
+                Text("Ask the Narrator about anything you've archived. Every answer cites your own documents.", color = Muted)
             }
             items(messages) { m ->
                 val isUser = m.role == "user"
@@ -77,7 +78,7 @@ fun NarratorScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     }
                 }
             }
-            if (busy) item { Text("The Narrator consults the archives…", color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
+            if (busy) item { Text("The Narrator consults the archives…", color = Muted, style = MaterialTheme.typography.bodySmall) }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -117,7 +118,7 @@ fun WeeklyReviewScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 }) { Text(if (busy) "Writing…" else "🕯️ Chronicle") }
             }
         }
-        if (reviews.isEmpty()) item { Text("No chronicles yet. Generate this week's review.", color = Color.Gray) }
+        if (reviews.isEmpty()) item { Text("No chronicles yet. Generate this week's review.", color = Muted) }
         items(reviews) { r -> ReviewCard(repo, r) }
     }
 }
@@ -133,11 +134,11 @@ private fun ReviewCard(repo: MindQuestRepository, r: WeeklyReviewEntity) {
         Spacer(Modifier.height(8.dp))
         Text(
             "⚡ ${stats.xpEarned} XP · ⚔️ ${stats.questsCompleted} · 🔥 ${stats.habitCheckins} · 📜 ${stats.documentsProcessed}",
-            style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+            style = MaterialTheme.typography.labelSmall, color = Muted,
         )
         if (suggestions.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            Text("Next week: ${suggestions.joinToString(" ")}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF6EE7B7))
+            Text("Next week: ${suggestions.joinToString(" ")}", style = MaterialTheme.typography.bodySmall, color = Verdant)
         }
     } }
 }
@@ -147,6 +148,7 @@ private fun ReviewCard(repo: MindQuestRepository, r: WeeklyReviewEntity) {
 @Composable
 fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val s = repo.settings
+    val context = LocalContext.current
     var key by remember { mutableStateOf("") }
     var model by remember { mutableStateOf(s.sarvamModel()) }
     var configured by remember { mutableStateOf(s.hasSarvamKey()) }
@@ -158,7 +160,7 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             Text("Sarvam AI", fontWeight = FontWeight.Bold, color = Parchment)
             Text(
                 if (configured) "✓ Key set — the Narrator, reviews and quest generation use Sarvam." else "No key — everything works offline (retrieval + templates).",
-                style = MaterialTheme.typography.bodySmall, color = if (configured) Color(0xFF6EE7B7) else Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = if (configured) Verdant else Muted,
             )
             OutlinedTextField(
                 key, { key = it }, label = { Text("Sarvam API key") },
@@ -176,16 +178,17 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         } }
         Card { Column(Modifier.padding(14.dp)) {
             Text("Sarvam usage", fontWeight = FontWeight.Bold, color = Parchment)
-            Text("${usage.first} calls · ${usage.second} chars in · ${usage.third} chars out", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            Text("${usage.first} calls · ${usage.second} chars in · ${usage.third} chars out", style = MaterialTheme.typography.bodySmall, color = Muted)
         } }
 
         var pin by remember { mutableStateOf("") }
         var hasPin by remember { mutableStateOf(s.hasPin()) }
+        var useBiometric by remember { mutableStateOf(s.biometricEnabled()) }
         Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("App lock", fontWeight = FontWeight.Bold, color = Parchment)
             Text(
                 if (hasPin) "✓ PIN set — required on each launch." else "Optional numeric PIN, checked when the app opens.",
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall, color = Muted,
             )
             if (!hasPin) {
                 OutlinedTextField(
@@ -196,10 +199,33 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 )
                 Button(enabled = pin.length >= 4, onClick = { s.setPin(pin); pin = ""; hasPin = true; notify("PIN set.") }) { Text("Set PIN") }
             } else {
-                OutlinedButton(onClick = { s.clearPin(); hasPin = false; notify("PIN removed.") }) { Text("Remove PIN") }
+                OutlinedButton(onClick = {
+                    s.clearPin(); s.setBiometricEnabled(false); useBiometric = false
+                    hasPin = false; notify("PIN removed.")
+                }) { Text("Remove PIN") }
+
+                // Biometrics ride on top of the PIN and are meaningless without it, so this
+                // only appears once a PIN exists — and clearing the PIN above turns it off.
+                val biometricBlocked = BiometricLock.unavailableReason(context)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = useBiometric,
+                        enabled = biometricBlocked == null,
+                        onCheckedChange = {
+                            s.setBiometricEnabled(it); useBiometric = it
+                            notify(if (it) "Fingerprint unlock on." else "Fingerprint unlock off.")
+                        },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Unlock with fingerprint", color = Parchment, style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(
+                    biometricBlocked ?: "Your PIN still works as the fallback if the sensor fails.",
+                    style = MaterialTheme.typography.labelSmall, color = Muted,
+                )
             }
         } }
 
-        Text("Your key and PIN are stored encrypted on this device and never leave it (the key only rides along on Sarvam requests you initiate).", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text("Your key and PIN are stored encrypted on this device and never leave it (the key only rides along on Sarvam requests you initiate).", style = MaterialTheme.typography.labelSmall, color = Muted)
     }
 }

@@ -12,13 +12,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.*
 import kotlinx.coroutines.launch
 
-private val Emerald = Color(0xFF6EE7B7)
 
 // ---------- Goals / Story Arcs ----------
 
@@ -52,7 +50,7 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 ) { Text("Begin the arc") }
             } }
         }
-        if (goals.isEmpty()) item { Text("No arcs yet. Every legend starts with a first chapter.", color = Color.Gray) }
+        if (goals.isEmpty()) item { Text("No arcs yet. Every legend starts with a first chapter.", color = Muted) }
         items(goals) { g ->
             val ms = byGoal[g.id].orEmpty().sortedBy { it.seq }
             val done = ms.count { it.completed }
@@ -61,7 +59,7 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     Text(g.title, color = Parchment, fontWeight = FontWeight.Bold)
                     Text(
                         if (g.status == "completed") "✓ complete" else "$done/${ms.size}",
-                        color = if (g.status == "completed") Emerald else Color.Gray,
+                        color = if (g.status == "completed") Verdant else Muted,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -69,8 +67,8 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 ms.forEach { m ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (m.completed) {
-                            Text("✓ ", color = Emerald)
-                            Text(m.title, color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                            Text("✓ ", color = Verdant)
+                            Text(m.title, color = Muted, style = MaterialTheme.typography.bodyMedium)
                         } else {
                             TextButton(onClick = {
                                 scope.launch {
@@ -122,7 +120,7 @@ fun SkillsScreen(repo: MindQuestRepository, skillPoints: Int, notify: (String) -
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Tier ${s.tier} — ${s.name}", color = Parchment, fontWeight = FontWeight.Bold)
-                            Text(s.description, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(s.description, style = MaterialTheme.typography.bodySmall, color = Muted)
                         }
                         if (owned) Text("owned", color = Rune, style = MaterialTheme.typography.labelSmall)
                         else TextButton(enabled = available, onClick = {
@@ -138,8 +136,8 @@ fun SkillsScreen(repo: MindQuestRepository, skillPoints: Int, notify: (String) -
 // ---------- Achievements + Collectibles ----------
 
 private val RARITY_COLOR = mapOf(
-    "common" to Color(0xFFCBD5E1), "rare" to Color(0xFF7DD3FC),
-    "epic" to Color(0xFFC4B5FD), "legendary" to Rune,
+    "common" to RarityCommon, "rare" to RarityRare,
+    "epic" to RarityEpic, "legendary" to Rune,
 )
 
 @Composable
@@ -151,7 +149,7 @@ fun AchievementsScreen(repo: MindQuestRepository) {
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("Hall of Deeds", style = MaterialTheme.typography.headlineMedium, color = Parchment)
-            Text("$unlocked/${achievements.size} earned", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            Text("$unlocked/${achievements.size} earned", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
         items(achievements.filter { !it.secret || it.unlockedAt != null }) { a ->
             val on = a.unlockedAt != null
@@ -159,21 +157,21 @@ fun AchievementsScreen(repo: MindQuestRepository) {
                 Text(a.icon, style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(a.name, color = if (on) Parchment else Color.Gray, fontWeight = FontWeight.Bold)
-                    Text(a.description, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text(a.name, color = if (on) Parchment else Muted, fontWeight = FontWeight.Bold)
+                    Text(a.description, style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
-                Text(if (on) "+${a.xpBonus}" else "🔒", color = if (on) Rune else Color.Gray)
+                Text(if (on) "+${a.xpBonus}" else "🔒", color = if (on) Rune else Muted)
             } }
         }
         item { Text("Collectibles", style = MaterialTheme.typography.titleMedium, color = Rune) }
-        if (collectibles.isEmpty()) item { Text("No relics yet — rare deeds earn rare things.", color = Color.Gray) }
+        if (collectibles.isEmpty()) item { Text("No relics yet — rare deeds earn rare things.", color = Muted) }
         items(collectibles) { c ->
             Card { Column(Modifier.padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(c.name, color = RARITY_COLOR[c.rarity] ?: Parchment, fontWeight = FontWeight.Bold)
-                    Text(c.rarity, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    Text(c.rarity, style = MaterialTheme.typography.labelSmall, color = Muted)
                 }
-                Text("“${c.lore}”", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("“${c.lore}”", style = MaterialTheme.typography.bodySmall, color = Muted)
             } }
         }
     }
@@ -223,7 +221,7 @@ fun AnalyticsScreen(repo: MindQuestRepository, refreshKey: Long) {
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             week.forEach { day ->
                                 val c = when {
-                                    day.count == 0 -> Color(0xFF1E293B)
+                                    day.count == 0 -> Trough
                                     day.count < 3 -> Rune.copy(alpha = 0.35f)
                                     day.count < 6 -> Rune.copy(alpha = 0.65f)
                                     else -> Rune
@@ -246,7 +244,7 @@ fun PersonalBestsScreen(repo: MindQuestRepository, refreshKey: Long) {
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Personal Bests", style = MaterialTheme.typography.headlineMedium, color = Parchment)
-        Text("Your records — no one to beat but yesterday's you.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        Text("Your records — no one to beat but yesterday's you.", color = Muted, style = MaterialTheme.typography.bodySmall)
         pb?.let { b ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MiniTile("Highest level", "${b.highestLevel}", Modifier.weight(1f))
@@ -269,7 +267,7 @@ private fun MiniTile(label: String, value: String, modifier: Modifier = Modifier
     Card(modifier) {
         Column(Modifier.padding(14.dp)) {
             Text(value, style = MaterialTheme.typography.titleLarge, color = Parchment)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
         }
     }
 }

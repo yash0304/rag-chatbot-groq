@@ -1,7 +1,6 @@
 package com.mindquest.app
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,25 +13,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.ui.*
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (not ComponentActivity) because androidx BiometricPrompt attaches itself
+// to the fragment manager. FragmentActivity extends ComponentActivity, so setContent is unaffected.
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(
-                colorScheme = lightColorScheme(
-                    primary = Rune,
-                    onPrimary = Abyss,
-                    secondary = Brass,
-                    background = Abyss,
-                    onBackground = Parchment,
-                    surface = Realm,
-                    onSurface = Parchment,
-                ),
-            ) {
+            MaterialTheme(colorScheme = MindQuestLightColors) {
                 MindQuestApp()
             }
         }
