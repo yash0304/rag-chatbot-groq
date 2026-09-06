@@ -172,6 +172,22 @@ data class ChatMessageEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Quick-capture inbox note: a line of text, optionally with a reminder time.
+ * Can graduate into a Quest (questId) or into the Archives (docId).
+ */
+@Entity(tableName = "notes", indices = [Index("createdAt")])
+@Serializable
+data class NoteEntity(
+    @PrimaryKey val id: String,
+    val text: String,
+    val done: Boolean = false,
+    val remindAt: Long? = null, // epoch millis; null = no reminder
+    val questId: String? = null, // set once promoted to a quest
+    val docId: String? = null, // set once saved to the archives
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 @Entity(tableName = "weekly_reviews")
 @Serializable
 data class WeeklyReviewEntity(

@@ -23,8 +23,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChunkEntity::class,
         ChatMessageEntity::class,
         WeeklyReviewEntity::class,
+        NoteEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -37,6 +38,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun documentDao(): DocumentDao
     abstract fun chatDao(): ChatDao
     abstract fun reviewDao(): ReviewDao
+    abstract fun noteDao(): NoteDao
 
     companion object {
         @Volatile
@@ -78,6 +80,18 @@ abstract class MindQuestDatabase : RoomDatabase() {
             }
         }
 
+        /** v3→v4: add the quick-capture notes inbox. Additive — existing data preserved. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `notes` (`id` TEXT NOT NULL, `text` TEXT NOT NULL, " +
+                        "`done` INTEGER NOT NULL, `remindAt` INTEGER, `questId` TEXT, `docId` TEXT, " +
+                        "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
         fun get(context: Context): MindQuestDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -87,7 +101,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
                 )
                     // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                     // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { instance = it }

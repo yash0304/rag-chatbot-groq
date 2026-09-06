@@ -23,7 +23,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(primary = Rune, background = Abyss, surface = Realm),
+                colorScheme = lightColorScheme(
+                    primary = Rune,
+                    onPrimary = Abyss,
+                    secondary = Brass,
+                    background = Abyss,
+                    onBackground = Parchment,
+                    surface = Realm,
+                    onSurface = Parchment,
+                ),
             ) {
                 MindQuestApp()
             }
@@ -35,6 +43,7 @@ private enum class AppState { Loading, Onboarding, Locked, Ready }
 
 private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
+    Inbox("Inbox", "📥"),
     Quests("Quests", "⚔️"),
     Habits("Daily Missions", "🔥"),
     Goals("Story Arcs", "📖"),
@@ -152,6 +161,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                 val p = profile
                 when (dest) {
                     Dest.Dashboard -> if (p != null) DashboardScreen(repo, p)
+                    Dest.Inbox -> InboxScreen(repo, notify)
                     Dest.Quests -> QuestsScreen(repo, notify)
                     Dest.Habits -> HabitsScreen(repo, notify)
                     Dest.Goals -> GoalsScreen(repo, notify)

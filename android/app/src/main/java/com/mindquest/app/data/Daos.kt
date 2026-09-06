@@ -195,6 +195,27 @@ interface ChatDao {
 }
 
 @Dao
+interface NoteDao {
+    @Upsert
+    suspend fun upsert(note: NoteEntity)
+
+    @Query("SELECT * FROM notes ORDER BY createdAt")
+    fun observeNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE id = :id")
+    suspend fun get(id: String): NoteEntity?
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM notes")
+    suspend fun allNotes(): List<NoteEntity>
+
+    @Query("SELECT COUNT(*) FROM notes WHERE done = 0")
+    suspend fun openCount(): Int
+}
+
+@Dao
 interface ReviewDao {
     @Upsert
     suspend fun upsert(review: WeeklyReviewEntity)
