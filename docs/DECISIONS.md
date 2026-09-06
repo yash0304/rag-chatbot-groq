@@ -3,6 +3,30 @@
 Newest first. Format: `YYYY-MM-DD — [AREA] Decision. (Why.)`
 Never delete a superseded decision — add a new dated line.
 
+2026-09-06 — [SEARCH] **Sharper search is staged: BM25 hybrid now, neural model later (MQ-25).**
+Yash is travelling on intermittent network, and a bundled MiniLM would take the APK from ~60 MB to
+~100 MB per update while adding inference code that cannot be verified anywhere but his phone.
+So retrieval now fuses BM25 over stemmed tokens with the existing hashing-embedding cosine, using
+Reciprocal Rank Fusion — RRF reads only each signal's ranking, so the noisy hashing vectors (whose
+cosines cluster in a narrow band) can't drown out the lexical signal. Zero size cost, no native
+deps, pure functions. The neural model stays on the backlog for when a bad build is cheap to undo.
+(His words: network will be on and off.)
+
+2026-09-06 — [UI] **Every colour comes from a semantic token; the full Material role set is pinned.**
+The console retheme swapped the palette but left ~60 literals chosen against a near-black ground —
+Tailwind emerald/rose/slate plus 49 `Color.Gray` — so success text washed out on cream and the
+analytics heatmap drew navy squares on paper. Worse, only 7 of Material's roles were set, so Card,
+Divider, OutlinedTextField and the drawer silently fell back to stock lilac-grey. Both are fixed at
+the source: `MindQuestLightColors` pins every role including the surfaceContainer ramp, and screens
+reference named tokens (Muted/Verdant/Ember/Hairline/Trough/Node*/Rarity*), each contrast-checked
+at 4.5:1 against BOTH grounds it sits on. New screens should never introduce a raw hex again.
+
+2026-09-06 — [SECURITY] **Biometric unlock is an accelerator, never a replacement for the PIN
+(MQ-24).** The toggle only appears once a PIN is set, clearing the PIN disables it, and every
+failure path — no sensor, nothing enrolled, cancelled prompt, thrown exception — lands back on the
+PIN field. A fingerprint sensor quirk must never lock him out of his own second brain, least of all
+while travelling. MainActivity became a FragmentActivity because BiometricPrompt requires one.
+
 2026-09-05 — [BUILD] **APKs are built by GitHub Actions; sideload build type is `.ci`.** Yash was
 travelling with no laptop and needed to update the app from his phone. A CI-built APK can never
 install over an Android-Studio build (different signing key → `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,

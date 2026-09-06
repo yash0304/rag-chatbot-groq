@@ -10,6 +10,7 @@ import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
 import com.mindquest.app.domain.Reminders
+import com.mindquest.app.domain.Retrieval
 import com.mindquest.app.domain.SarvamClient
 import java.io.File
 import java.time.Instant
@@ -502,17 +503,20 @@ class MindQuestRepository(private val context: Context) {
         documentDao.deleteDocument(id)
     }
 
+    /** Hybrid BM25 + embedding search over every chunk of every ready document. */
     suspend fun search(query: String, limit: Int = 8): List<SearchHit> {
         if (query.isBlank()) return emptyList()
-        val qv = Embeddings.embed(query)
         val docs = documentDao.readyDocuments().associateBy { it.id }
-        return documentDao.allChunks()
-            .mapNotNull { c ->
-                val doc = docs[c.documentId] ?: return@mapNotNull null
-                SearchHit(doc.title, c.text.take(300), c.location, Embeddings.cosine(qv, Embeddings.fromCsv(c.vectorCsv)))
-            }
-            .sortedByDescending { it.score }
-            .take(limit)
+        val chunks = documentDao.allChunks().filter { docs.containsKey(it.documentId) }
+        return Retrieval.hybridRank(
+            query = query,
+            items = chunks,
+            textOf = { it.text },
+            vectorOf = { Embeddings.fromCsv(it.vectorCsv) },
+            limit = limit,
+        ).map { (chunk, score) ->
+            SearchHit(docs.getValue(chunk.documentId).title, chunk.text.take(300), chunk.location, score)
+        }
     }
 
     suspend fun buildGraph(): GraphData {
