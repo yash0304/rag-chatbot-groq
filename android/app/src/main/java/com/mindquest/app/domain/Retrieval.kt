@@ -74,6 +74,7 @@ object Retrieval {
      */
     fun <T> hybridRank(
         query: String,
+        queryVector: FloatArray,
         items: List<T>,
         textOf: (T) -> String,
         vectorOf: (T) -> FloatArray,
@@ -82,8 +83,10 @@ object Retrieval {
         if (items.isEmpty()) return emptyList()
 
         val queryTerms = tokenize(query).distinct()
-        val queryVector = Embeddings.embed(query)
 
+        // Chunks embedded by a previous model have a different dimension; cosine reports -1
+        // for those, so they sink on the vector side but remain findable via BM25 until the
+        // search index is rebuilt.
         val vectorScores = items.map { Embeddings.cosine(queryVector, vectorOf(it)) }
         val lexicalScores = bm25(queryTerms, items.map { textOf(it) })
 

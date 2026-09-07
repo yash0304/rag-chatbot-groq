@@ -18,6 +18,11 @@ android {
         versionName = "1.0.0"
         // Point at your MindQuest API deployment; 10.0.2.2 reaches the host from the emulator.
         buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000\"")
+
+        // ONNX Runtime ships native libs for four ABIs. Keeping only the two that real
+        // phones use halves what it adds to the APK; x86/x86_64 are emulator-only, so an
+        // emulator needs this line relaxed.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // Sideload signing: CI writes the keystore to this path from a repo secret. Without it
@@ -84,6 +89,9 @@ dependencies {
     // Optional fingerprint / face unlock in front of the PIN (MQ-24)
     implementation("androidx.biometric:biometric:1.1.0")
 
+    // On-device sentence embeddings (MQ-25) — runs the MiniLM ONNX graph locally
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+
     // Room — local on-device database (offline source of truth)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
@@ -101,3 +109,48 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
+
+// ---------------------------------------------------------------------------
+// MQ-25: fetch the MiniLM sentence-embedding model into assets at build time.
+//
+// The model is ~23 MB of binary, so it is downloaded rather than committed — this repo is
+// public and a binary that size does not belong in its history. The download is cached
+// (skipped when the files already exist) and is deliberately NON-FATAL: a build with no
+// network still produces a working app, it just falls back to hashing embeddings. That is
+// why the app checks for these assets at runtime instead of assuming them.
+// ---------------------------------------------------------------------------
+val embeddingAssets = mapOf(
+    "minilm.onnx" to "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
+    "minilm_vocab.txt" to "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
+)
+
+val fetchEmbeddingModel by tasks.registering {
+    description = "Downloads the MiniLM ONNX model and vocab into src/main/assets."
+    val assetsDir = file("src/main/assets")
+    outputs.dir(assetsDir)
+    doLast {
+        assetsDir.mkdirs()
+        embeddingAssets.forEach { (name, url) ->
+            val target = File(assetsDir, name)
+            if (target.exists() && target.length() > 0) {
+                logger.lifecycle("MQ-25: $name already present (${target.length() / 1024} KB)")
+                return@forEach
+            }
+            try {
+                logger.lifecycle("MQ-25: downloading $name …")
+                val tmp = File(assetsDir, "$name.part")
+                java.net.URI(url).toURL().openStream().use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (tmp.length() == 0L) error("empty download")
+                tmp.renameTo(target)
+                logger.lifecycle("MQ-25: $name ready (${target.length() / 1024} KB)")
+            } catch (e: Exception) {
+                File(assetsDir, "$name.part").delete()
+                logger.warn("MQ-25: could not fetch $name (${e.message}). Build continues; the app will use hashing embeddings.")
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(fetchEmbeddingModel) }

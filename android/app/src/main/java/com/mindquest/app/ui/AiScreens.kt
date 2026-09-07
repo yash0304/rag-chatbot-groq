@@ -149,6 +149,7 @@ private fun ReviewCard(repo: MindQuestRepository, r: WeeklyReviewEntity) {
 fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val s = repo.settings
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var key by remember { mutableStateOf("") }
     var model by remember { mutableStateOf(s.sarvamModel()) }
     var configured by remember { mutableStateOf(s.hasSarvamKey()) }
@@ -179,6 +180,37 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         Card { Column(Modifier.padding(14.dp)) {
             Text("Sarvam usage", fontWeight = FontWeight.Bold, color = Parchment)
             Text("${usage.first} calls · ${usage.second} chars in · ${usage.third} chars out", style = MaterialTheme.typography.bodySmall, color = Muted)
+        } }
+
+        var stale by remember { mutableStateOf(-1) }
+        var reindexing by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(Unit) { stale = repo.staleChunkCount() }
+        Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Search index", fontWeight = FontWeight.Bold, color = Parchment)
+            Text("Embeddings: ${repo.embedderLabel()}", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text(
+                when {
+                    reindexing != null -> reindexing!!
+                    stale <= 0 -> "✓ Every document is indexed with the current model."
+                    else -> "$stale passage(s) were indexed by an older model. Rebuild to search them properly."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (stale > 0 && reindexing == null) Ember else Muted,
+            )
+            if (stale > 0) {
+                Button(
+                    enabled = reindexing == null,
+                    onClick = {
+                        reindexing = "Rebuilding…"
+                        scope.launch {
+                            val done = repo.reindexSearch { d, t -> reindexing = "Rebuilding… $d / $t" }
+                            reindexing = null
+                            stale = repo.staleChunkCount()
+                            notify("Reindexed $done passage(s).")
+                        }
+                    },
+                ) { Text("Rebuild search index") }
+            }
         } }
 
         var pin by remember { mutableStateOf("") }

@@ -9,6 +9,7 @@ import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
+import com.mindquest.app.domain.Embedders
 import com.mindquest.app.domain.Reminders
 import com.mindquest.app.domain.Retrieval
 import com.mindquest.app.domain.SarvamClient
@@ -122,6 +123,9 @@ class MindQuestRepository(private val context: Context) {
     private val reviewDao = db.reviewDao()
     private val noteDao = db.noteDao()
     private val json = Json { ignoreUnknownKeys = true }
+
+    // Resolved on first use: the MiniLM model if its assets shipped, else hashing vectors.
+    private val embedder by lazy { Embedders.active(context) }
 
     val settings = SettingsStore(context)
     private val sarvam = SarvamClient(settings)
@@ -471,7 +475,7 @@ class MindQuestRepository(private val context: Context) {
             chunks.map { (seq, text, loc) ->
                 ChunkEntity(
                     id = UUID.randomUUID().toString(), documentId = id, seq = seq, text = text,
-                    location = loc, vectorCsv = Embeddings.toCsv(Embeddings.embed(text)),
+                    location = loc, vectorCsv = Embeddings.toCsv(embedder.embed(text)),
                 )
             },
         )
@@ -510,6 +514,7 @@ class MindQuestRepository(private val context: Context) {
         val chunks = documentDao.allChunks().filter { docs.containsKey(it.documentId) }
         return Retrieval.hybridRank(
             query = query,
+            queryVector = embedder.embed(query),
             items = chunks,
             textOf = { it.text },
             vectorOf = { Embeddings.fromCsv(it.vectorCsv) },
@@ -518,6 +523,37 @@ class MindQuestRepository(private val context: Context) {
             SearchHit(docs.getValue(chunk.documentId).title, chunk.text.take(300), chunk.location, score)
         }
     }
+
+    /** Which embedder is live, for the Settings screen. */
+    fun embedderLabel(): String = embedder.label
+
+    /**
+     * Chunks whose vectors came from a different embedder than the one now running —
+     * i.e. everything archived before the MiniLM model arrived. They stay searchable
+     * lexically in the meantime, so this is a quality gap, not an outage.
+     */
+    suspend fun staleChunkCount(): Int = withContext(Dispatchers.IO) {
+        val dim = embedder.dim
+        documentDao.allChunks().count { Embeddings.fromCsv(it.vectorCsv).size != dim }
+    }
+
+    /**
+     * Re-embed every out-of-date chunk with the active model. Runs off the main thread and
+     * reports progress, because with a real transformer this is seconds-to-minutes of work
+     * rather than the instant rewrite the hashing embeddings used to be.
+     */
+    suspend fun reindexSearch(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Int =
+        withContext(Dispatchers.IO) {
+            val dim = embedder.dim
+            val stale = documentDao.allChunks().filter { Embeddings.fromCsv(it.vectorCsv).size != dim }
+            stale.chunked(REINDEX_BATCH).forEachIndexed { batchIndex, batch ->
+                documentDao.upsertChunks(
+                    batch.map { it.copy(vectorCsv = Embeddings.toCsv(embedder.embed(it.text))) },
+                )
+                onProgress(minOf((batchIndex + 1) * REINDEX_BATCH, stale.size), stale.size)
+            }
+            stale.size
+        }
 
     suspend fun buildGraph(): GraphData {
         val docs = documentDao.readyDocuments()
@@ -815,4 +851,9 @@ class MindQuestRepository(private val context: Context) {
     }
 
     suspend fun openNoteCount(): Int = noteDao.openCount()
+
+    private companion object {
+        /** Chunks re-embedded per database write during a reindex. */
+        const val REINDEX_BATCH = 16
+    }
 }
