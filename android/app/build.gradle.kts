@@ -1,3 +1,7 @@
+// Explicit: inside a Kotlin build script `java` is Gradle's JavaPluginExtension, so the
+// fully-qualified `java.net.URI` does not resolve.
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -142,7 +146,7 @@ val fetchEmbeddingModel by tasks.registering {
             try {
                 logger.lifecycle("MQ-25: downloading $name …")
                 val tmp = File(assetsDir, "$name.part")
-                java.net.URI(url).toURL().openStream().use { input ->
+                URI(url).toURL().openStream().use { input ->
                     tmp.outputStream().use { output -> input.copyTo(output) }
                 }
                 if (tmp.length() == 0L) error("empty download")
