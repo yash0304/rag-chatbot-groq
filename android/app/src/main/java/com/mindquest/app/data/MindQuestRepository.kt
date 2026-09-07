@@ -522,7 +522,10 @@ class MindQuestRepository(private val context: Context) {
                 // Trust it rather than classifying the same words a second time and risking
                 // a different answer for the same content.
                 domain = category ?: Categories.classify(fullText),
-                domainLocked = category != null,
+                // Inherited, not chosen here — deliberately left unlocked so that correcting
+                // the source note later still flows through. Only a category set directly on
+                // this document locks it.
+                domainLocked = false,
                 tagsCsv = Ingestion.tags(fullText).joinToString(","),
                 ocrUsed = ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
             ),
@@ -889,8 +892,9 @@ class MindQuestRepository(private val context: Context) {
                 id = questId, title = note.text.take(255), difficulty = diff,
                 xpReward = Catalogs.difficultyXp.getValue(diff), status = "active",
                 source = "manual", dueAt = note.remindAt,
+                // Inherited from the note and left unlocked, so that changing the note's
+                // category later keeps the quest in step. See ingest() for the same reasoning.
                 category = note.category ?: Categories.classify(note.text),
-                categoryLocked = true, // inherited from the note; never re-guessed
             ),
         )
         noteDao.upsert(note.copy(questId = questId))
