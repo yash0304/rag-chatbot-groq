@@ -185,6 +185,7 @@ data class NoteEntity(
     val remindAt: Long? = null, // epoch millis; null = no reminder
     val questId: String? = null, // set once promoted to a quest
     val docId: String? = null, // set once saved to the archives
+    val category: String? = null, // Categories.classify() guess; user can override
     val createdAt: Long = System.currentTimeMillis(),
 )
 

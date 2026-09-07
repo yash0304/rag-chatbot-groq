@@ -25,7 +25,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WeeklyReviewEntity::class,
         NoteEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -92,6 +92,13 @@ abstract class MindQuestDatabase : RoomDatabase() {
             }
         }
 
+        /** v4→v5: notes gain a life category (travel/shopping/...). Additive — data preserved. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `category` TEXT")
+            }
+        }
+
         fun get(context: Context): MindQuestDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -101,7 +108,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
                 )
                     // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                     // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { instance = it }

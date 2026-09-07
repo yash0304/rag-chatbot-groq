@@ -20,7 +20,15 @@ object Retrieval {
 
     private const val K1 = 1.2 // term-frequency saturation
     private const val B = 0.75 // length normalisation
-    private const val RRF_K = 60.0 // standard RRF damping
+    private const val RRF_K = 60.0 // standard RRF damping, hashing fallback only
+    private const val VECTOR_WEIGHT = 0.7
+    private const val LEXICAL_WEIGHT = 0.3
+
+    /**
+     * Cosine below this counts as unrelated for MiniLM. Sentence-transformer similarity for
+     * genuinely unrelated text sits around 0.0–0.2; loosely related text clears 0.3.
+     */
+    private const val MIN_COSINE = 0.25
 
     private val TOKEN = Regex("[a-z0-9]+")
 
@@ -79,6 +87,7 @@ object Retrieval {
         textOf: (T) -> String,
         vectorOf: (T) -> FloatArray,
         limit: Int,
+        semanticVectors: Boolean = true,
     ): List<Scored<T>> {
         if (items.isEmpty()) return emptyList()
 
@@ -90,23 +99,62 @@ object Retrieval {
         val vectorScores = items.map { Embeddings.cosine(queryVector, vectorOf(it)) }
         val lexicalScores = bm25(queryTerms, items.map { textOf(it) })
 
-        // Rank positions per signal. A chunk with no lexical hit at all is left out of the
-        // BM25 list entirely rather than given a bad rank, so it contributes nothing there.
-        val vectorRank = rankPositions(items.indices.map { it to vectorScores[it].toDouble() })
-        val lexicalRank = rankPositions(items.indices.mapNotNull { i ->
-            if (lexicalScores[i] > 0.0) i to lexicalScores[i] else null
-        })
-
-        val fused = items.indices.map { i ->
-            var score = 0.0
-            vectorRank[i]?.let { score += 1.0 / (RRF_K + it) }
-            lexicalRank[i]?.let { score += 1.0 / (RRF_K + it) }
-            i to score
+        val fused = if (semanticVectors) {
+            blendByScore(items.indices, vectorScores, lexicalScores)
+        } else {
+            fuseByRank(items.indices, vectorScores, lexicalScores)
         }.filter { it.second > 0.0 }.sortedByDescending { it.second }
 
         val best = fused.firstOrNull()?.second ?: return emptyList()
         return fused.take(limit).map { (i, score) ->
             Scored(items[i], (score / best).toFloat())
+        }
+    }
+
+    /**
+     * Weighted blend of actual scores, for a real sentence-embedding model.
+     *
+     * A transformer's cosine means something — 0.6 really is more similar than 0.3 — so
+     * throwing that away costs real precision. Cosine carries most of the weight; BM25
+     * (min-max normalised, since its scale is unbounded) supplies the exact-term boost.
+     * Anything below [MIN_COSINE] with no lexical hit is dropped rather than ranked, which
+     * is what stops unrelated passages padding out a short result list.
+     */
+    private fun blendByScore(
+        indices: IntRange,
+        vectorScores: List<Float>,
+        lexicalScores: DoubleArray,
+    ): List<Pair<Int, Double>> {
+        val maxLexical = lexicalScores.maxOrNull() ?: 0.0
+        return indices.map { i ->
+            val cosine = vectorScores[i].toDouble().coerceAtLeast(0.0)
+            val lexical = if (maxLexical > 0) lexicalScores[i] / maxLexical else 0.0
+            val keep = cosine >= MIN_COSINE || lexical > 0.0
+            i to if (keep) VECTOR_WEIGHT * cosine + LEXICAL_WEIGHT * lexical else 0.0
+        }
+    }
+
+    /**
+     * Reciprocal Rank Fusion, for the hashing fallback. Those vectors produce cosines
+     * clustered in a narrow band where magnitude is noise, so only the ordering is
+     * trustworthy and a weighted sum would let that noise outvote BM25.
+     */
+    private fun fuseByRank(
+        indices: IntRange,
+        vectorScores: List<Float>,
+        lexicalScores: DoubleArray,
+    ): List<Pair<Int, Double>> {
+        val vectorRank = rankPositions(indices.map { it to vectorScores[it].toDouble() })
+        // A chunk with no lexical hit is left out of the BM25 ranking entirely rather than
+        // given a bad rank, so it contributes nothing there instead of noise.
+        val lexicalRank = rankPositions(indices.mapNotNull { i ->
+            if (lexicalScores[i] > 0.0) i to lexicalScores[i] else null
+        })
+        return indices.map { i ->
+            var score = 0.0
+            vectorRank[i]?.let { score += 1.0 / (RRF_K + it) }
+            lexicalRank[i]?.let { score += 1.0 / (RRF_K + it) }
+            i to score
         }
     }
 

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
+import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -106,6 +107,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         }
                     },
                     onDelete = { scope.launch { repo.deleteNote(note.id) } },
+                    onCategory = { scope.launch { repo.setNoteCategory(note.id, it) } },
                 )
             }
         }
@@ -156,6 +158,7 @@ private fun NoteCard(
     onQuest: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
+    onCategory: (String) -> Unit,
 ) {
     Card {
         Column(Modifier.padding(12.dp)) {
@@ -185,6 +188,23 @@ private fun NoteCard(
                     },
                     style = MaterialTheme.typography.labelSmall, color = Muted,
                 )
+            }
+            // The auto-guess is only a guess, so it is always one tap from being corrected.
+            var pickCategory by remember { mutableStateOf(false) }
+            Box {
+                val current = Categories.of(note.category)
+                AssistChip(
+                    onClick = { pickCategory = true },
+                    label = { Text("${current.icon} ${current.label}", style = MaterialTheme.typography.labelSmall) },
+                )
+                DropdownMenu(expanded = pickCategory, onDismissRequest = { pickCategory = false }) {
+                    Categories.all.forEach { category ->
+                        DropdownMenuItem(
+                            text = { Text("${category.icon} ${category.label}") },
+                            onClick = { pickCategory = false; onCategory(category.id) },
+                        )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = if (note.remindAt == null) onRemind else onClearRemind) {
