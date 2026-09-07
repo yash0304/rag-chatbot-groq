@@ -240,7 +240,14 @@ class MindQuestRepository(private val context: Context) {
     fun observeActiveQuests(): Flow<List<QuestEntity>> = questDao.observeByStatus("active")
     fun observeAllQuests(): Flow<List<QuestEntity>> = questDao.observeAll()
 
-    suspend fun createQuest(title: String, difficulty: String, description: String? = null, goalId: String? = null) {
+    suspend fun createQuest(
+        title: String,
+        difficulty: String,
+        description: String? = null,
+        goalId: String? = null,
+        category: String? = null,
+        categoryChosen: Boolean = false,
+    ) {
         val diff = if (difficulty in Catalogs.difficultyXp) difficulty else "normal"
         questDao.upsert(
             QuestEntity(
@@ -251,6 +258,8 @@ class MindQuestRepository(private val context: Context) {
                 xpReward = Catalogs.difficultyXp.getValue(diff),
                 status = "active",
                 goalId = goalId,
+                category = category ?: Categories.classify(listOfNotNull(title, description).joinToString(" ")),
+                categoryLocked = categoryChosen,
             ),
         )
     }
@@ -830,11 +839,21 @@ class MindQuestRepository(private val context: Context) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeNotes()
 
     /** Capture a line of text; optionally schedule a reminder notification. */
-    suspend fun addNote(text: String, remindAt: Long? = null): String {
+    suspend fun addNote(
+        text: String,
+        remindAt: Long? = null,
+        category: String? = null,
+        categoryChosen: Boolean = false,
+    ): String {
         val id = UUID.randomUUID().toString()
         val body = text.trim()
         noteDao.upsert(
-            NoteEntity(id = id, text = body, remindAt = remindAt, category = Categories.classify(body)),
+            NoteEntity(
+                id = id, text = body, remindAt = remindAt,
+                category = category ?: Categories.classify(body),
+                // Confirmed at capture, so nothing downstream may second-guess it.
+                categoryLocked = categoryChosen,
+            ),
         )
         if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
         return id
