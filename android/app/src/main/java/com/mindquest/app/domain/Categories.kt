@@ -28,13 +28,6 @@ object Categories {
         Category("general", "General", "📌"),
     )
 
-    /**
-     * Bump whenever the keyword lists below change. Anything the user has not categorised
-     * by hand is re-sorted on the next launch, so improvements to the vocabulary reach
-     * existing notes instead of only new ones.
-     */
-    const val REVISION = 2
-
     private val byId = all.associateBy { it.id }
 
     fun of(id: String?): Category = byId[id] ?: byId.getValue("general")

@@ -473,20 +473,27 @@ class MindQuestRepository(private val context: Context) {
     }
 
     /** Import raw text (e.g. a transcribed voice note) through the same pipeline. */
-    suspend fun importTextNote(title: String, text: String): String {
+    suspend fun importTextNote(title: String, text: String, category: String? = null): String {
         val id = UUID.randomUUID().toString()
         val name = title.ifBlank { "Voice note" }
         documentDao.upsertDocument(DocumentEntity(id = id, title = name, filename = name, mimeType = "text/plain", status = "processing"))
         award("document_uploaded", Catalogs.Xp.DOCUMENT_UPLOADED, refId = id)
         try {
-            ingest(id, name, "text/plain", listOf(1 to text), ocrUsed = false)
+            ingest(id, name, "text/plain", listOf(1 to text), ocrUsed = false, category = category)
         } catch (e: Exception) {
             markFailed(id, e)
         }
         return id
     }
 
-    private suspend fun ingest(id: String, name: String, mime: String, pages: List<Pair<Int, String>>, ocrUsed: Boolean) {
+    private suspend fun ingest(
+        id: String,
+        name: String,
+        mime: String,
+        pages: List<Pair<Int, String>>,
+        ocrUsed: Boolean,
+        category: String? = null,
+    ) {
         val fullText = pages.joinToString("\n\n") { it.second }
         if (fullText.isBlank()) error("No text could be extracted (a scanned file may produce no OCR text).")
         val chunks = Ingestion.chunk(pages)
@@ -501,7 +508,12 @@ class MindQuestRepository(private val context: Context) {
         documentDao.upsertDocument(
             DocumentEntity(
                 id = id, title = name, filename = name, mimeType = mime, status = "ready",
-                summary = Ingestion.summarize(fullText), domain = Categories.classify(fullText),
+                summary = Ingestion.summarize(fullText),
+                // A category passed in came from the note this document was promoted from.
+                // Trust it rather than classifying the same words a second time and risking
+                // a different answer for the same content.
+                domain = category ?: Categories.classify(fullText),
+                domainLocked = category != null,
                 tagsCsv = Ingestion.tags(fullText).joinToString(","),
                 ocrUsed = ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
             ),
@@ -859,6 +871,7 @@ class MindQuestRepository(private val context: Context) {
                 xpReward = Catalogs.difficultyXp.getValue(diff), status = "active",
                 source = "manual", dueAt = note.remindAt,
                 category = note.category ?: Categories.classify(note.text),
+                categoryLocked = true, // inherited from the note; never re-guessed
             ),
         )
         noteDao.upsert(note.copy(questId = questId))
@@ -869,7 +882,7 @@ class MindQuestRepository(private val context: Context) {
     suspend fun noteToArchive(id: String): Boolean {
         val note = noteDao.get(id) ?: return false
         if (note.docId != null) return false
-        val docId = importTextNote(note.text.take(60), note.text)
+        val docId = importTextNote(note.text.take(60), note.text, note.category)
         noteDao.upsert(note.copy(docId = docId))
         return true
     }
@@ -893,46 +906,55 @@ class MindQuestRepository(private val context: Context) {
     }
 
     /**
-     * Give a category to everything captured before categories existed, and to documents
-     * still carrying the old "Something Realm" placeholder domain. Runs once at startup:
-     * classification is keyword matching, so even a few hundred items cost milliseconds,
-     * and anything already categorised is left alone — a user's own correction is never
-     * overwritten.
+     * Categories are decided once, where the thing is written, and then travel with it.
+     * This only fills gaps and repairs divergence; it never re-guesses something that
+     * already has an answer.
+     *
+     * The gap case is legacy data captured before categories existed (and documents still
+     * carrying the old "Something Realm" domain). The repair case is the bug this replaced:
+     * a note promoted to the Archives used to be re-classified from scratch, so the same
+     * words could land in two different categories depending on which screen you looked at.
+     * The note is the source of truth; anything derived from it follows, unless the user has
+     * set that item's category by hand.
      */
     suspend fun backfillCategories(): Int = withContext(Dispatchers.IO) {
         val known = Categories.all.map { it.id }.toSet()
-        val storedRevision = settings.categoriesRevision()
-        val vocabularyChanged = storedRevision < Categories.REVISION
         var changed = 0
 
-        // Re-sort when the vocabulary improved, otherwise only fill in what has no category
-        // at all. Either way, anything the user set by hand is left exactly as they left it.
-        noteDao.allNotes()
-            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
-            .forEach {
-                val guess = Categories.classify(it.text)
-                if (guess != it.category) { noteDao.upsert(it.copy(category = guess)); changed++ }
-            }
+        // --- gaps: legacy rows with no category at all ---
+        noteDao.allNotes().filter { it.category == null }.forEach {
+            noteDao.upsert(it.copy(category = Categories.classify(it.text)))
+            changed++
+        }
+        questDao.allQuests().filter { it.category == null }.forEach {
+            val text = listOfNotNull(it.title, it.description).joinToString(" ")
+            questDao.upsert(it.copy(category = Categories.classify(text)))
+            changed++
+        }
+        documentDao.allDocuments().filter { it.domain !in known }.forEach { doc ->
+            val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
+            documentDao.upsertDocument(doc.copy(domain = Categories.classify(text)))
+            changed++
+        }
 
-        questDao.allQuests()
-            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
-            .forEach {
-                val text = listOfNotNull(it.title, it.description).joinToString(" ")
-                val guess = Categories.classify(text)
-                if (guess != it.category) { questDao.upsert(it.copy(category = guess)); changed++ }
+        // --- repair: make derived items agree with the note they came from ---
+        noteDao.allNotes().forEach { note ->
+            val category = note.category ?: return@forEach
+            note.questId?.let { questId ->
+                val quest = questDao.get(questId)
+                if (quest != null && !quest.categoryLocked && quest.category != category) {
+                    questDao.upsert(quest.copy(category = category, categoryLocked = true))
+                    changed++
+                }
             }
-
-        documentDao.allDocuments()
-            .filter { !it.domainLocked && (it.domain !in known || vocabularyChanged) }
-            .forEach { doc ->
-                // Classify from title + summary; the full text lives in chunks and re-reading
-                // every one of them at startup would not be worth the milliseconds.
-                val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
-                val guess = Categories.classify(text)
-                if (guess != doc.domain) { documentDao.upsertDocument(doc.copy(domain = guess)); changed++ }
+            note.docId?.let { docId ->
+                val doc = documentDao.get(docId)
+                if (doc != null && !doc.domainLocked && doc.domain != category) {
+                    documentDao.upsertDocument(doc.copy(domain = category, domainLocked = true))
+                    changed++
+                }
             }
-
-        settings.setCategoriesRevision(Categories.REVISION)
+        }
         changed
     }
 
