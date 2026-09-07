@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
  * Results say which screen each hit lives on, because the point is finding a half
  * remembered thing without knowing where you filed it. Tapping a result takes you there.
  */
+@OptIn(ExperimentalMaterial3Api::class) // ModalBottomSheet
 @Composable
 fun GlobalSearchSheet(
     repo: MindQuestRepository,
