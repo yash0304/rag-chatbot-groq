@@ -45,6 +45,7 @@ data class QuestEntity(
     val status: String = "active", // draft|active|completed|abandoned
     val source: String = "manual", // manual|ai
     val goalId: String? = null,
+    val category: String? = null, // life category, same vocabulary as notes and documents
     val dueAt: Long? = null,
     val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),

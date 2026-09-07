@@ -111,6 +111,8 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val active = quests.filter { it.status == "active" }
     val done = quests.filter { it.status == "completed" }
     var generating by remember { mutableStateOf(false) }
+    var categoryFilter by remember { mutableStateOf<String?>(null) }
+    val shownActive = active.filter { categoryFilter == null || it.category == categoryFilter }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -166,11 +168,19 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             } }
         }
         item { Text("Active", style = MaterialTheme.typography.titleMedium, color = Rune) }
+        item {
+            CategoryFilterRow(
+                present = active.mapNotNull { it.category }.toSet(),
+                selected = categoryFilter,
+                onSelect = { categoryFilter = it },
+            )
+        }
         if (active.isEmpty()) item { Text("The board is clear.", color = Muted) }
-        items(active) { q ->
+        items(shownActive) { q ->
             Card { Column(Modifier.padding(12.dp)) {
                 Text(q.title, color = Parchment)
                 Text("${q.difficulty} · +${q.xpReward} XP", style = MaterialTheme.typography.bodySmall, color = Rune)
+                CategoryChip(q.category) { scope.launch { repo.setQuestCategory(q.id, it) } }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { scope.launch { repo.abandonQuest(q.id) } }) { Text("Abandon") }
                     Button(onClick = {

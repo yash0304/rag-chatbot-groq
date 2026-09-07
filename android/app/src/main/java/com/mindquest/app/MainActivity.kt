@@ -62,6 +62,9 @@ fun MindQuestApp() {
 
     LaunchedEffect(Unit) {
         repo.seedIfEmpty()
+        // Give a category to anything captured before categories existed. Cheap keyword
+        // work, and it never overwrites a category the user has already set.
+        repo.backfillCategories()
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked

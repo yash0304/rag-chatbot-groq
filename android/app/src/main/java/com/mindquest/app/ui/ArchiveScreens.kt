@@ -42,6 +42,8 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val docs by repo.observeDocuments().collectAsState(emptyList())
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
+    var categoryFilter by remember { mutableStateOf<String?>(null) }
+    val shownDocs = docs.filter { categoryFilter == null || it.domain == categoryFilter }
 
     val recorder = remember { WavRecorder() }
     var recording by remember { mutableStateOf(false) }
@@ -130,14 +132,21 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             }
         }
         item { Text("Documents", style = MaterialTheme.typography.titleMedium, color = Rune) }
+        item {
+            CategoryFilterRow(
+                present = docs.mapNotNull { it.domain }.toSet(),
+                selected = categoryFilter,
+                onSelect = { categoryFilter = it },
+            )
+        }
         if (docs.isEmpty()) item { Text("The shelves are empty. Upload your first tome.", color = Muted) }
-        items(docs) { d ->
+        items(shownDocs) { d ->
             Card { Column(Modifier.padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(d.title, color = Parchment, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     Text(d.status, color = StatusColor[d.status] ?: Muted, style = MaterialTheme.typography.labelSmall)
                 }
-                d.domain?.let { Text("🗺️ $it", style = MaterialTheme.typography.labelSmall, color = Rune) }
+                CategoryChip(d.domain) { scope.launch { repo.setDocumentCategory(d.id, it) } }
                 d.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Muted) }
                 d.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Ember) }
                 if (d.tagsCsv.isNotBlank()) {

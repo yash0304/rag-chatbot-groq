@@ -501,7 +501,7 @@ class MindQuestRepository(private val context: Context) {
         documentDao.upsertDocument(
             DocumentEntity(
                 id = id, title = name, filename = name, mimeType = mime, status = "ready",
-                summary = Ingestion.summarize(fullText), domain = Ingestion.domain(fullText),
+                summary = Ingestion.summarize(fullText), domain = Categories.classify(fullText),
                 tagsCsv = Ingestion.tags(fullText).joinToString(","),
                 ocrUsed = ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
             ),
@@ -858,6 +858,7 @@ class MindQuestRepository(private val context: Context) {
                 id = questId, title = note.text.take(255), difficulty = diff,
                 xpReward = Catalogs.difficultyXp.getValue(diff), status = "active",
                 source = "manual", dueAt = note.remindAt,
+                category = note.category ?: Categories.classify(note.text),
             ),
         )
         noteDao.upsert(note.copy(questId = questId))
@@ -879,6 +880,46 @@ class MindQuestRepository(private val context: Context) {
     suspend fun setNoteCategory(id: String, category: String) {
         val note = noteDao.get(id) ?: return
         noteDao.upsert(note.copy(category = category))
+    }
+
+    suspend fun setQuestCategory(id: String, category: String) {
+        val quest = questDao.get(id) ?: return
+        questDao.upsert(quest.copy(category = category))
+    }
+
+    suspend fun setDocumentCategory(id: String, category: String) {
+        val doc = documentDao.get(id) ?: return
+        documentDao.upsertDocument(doc.copy(domain = category))
+    }
+
+    /**
+     * Give a category to everything captured before categories existed, and to documents
+     * still carrying the old "Something Realm" placeholder domain. Runs once at startup:
+     * classification is keyword matching, so even a few hundred items cost milliseconds,
+     * and anything already categorised is left alone — a user's own correction is never
+     * overwritten.
+     */
+    suspend fun backfillCategories(): Int = withContext(Dispatchers.IO) {
+        val known = Categories.all.map { it.id }.toSet()
+        var changed = 0
+
+        noteDao.allNotes().filter { it.category == null }.forEach {
+            noteDao.upsert(it.copy(category = Categories.classify(it.text)))
+            changed++
+        }
+        questDao.allQuests().filter { it.category == null }.forEach {
+            val text = listOfNotNull(it.title, it.description).joinToString(" ")
+            questDao.upsert(it.copy(category = Categories.classify(text)))
+            changed++
+        }
+        documentDao.allDocuments().filter { it.domain !in known }.forEach { doc ->
+            // Classify from title + summary; the full text lives in chunks and re-reading
+            // every one of them at startup would not be worth the milliseconds.
+            val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
+            documentDao.upsertDocument(doc.copy(domain = Categories.classify(text)))
+            changed++
+        }
+        changed
     }
 
     // ---------- global search ----------
