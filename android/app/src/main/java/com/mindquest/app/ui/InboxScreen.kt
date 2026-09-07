@@ -15,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -61,7 +60,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         Text("Inbox", style = MaterialTheme.typography.headlineMedium, color = Parchment)
         Text(
             "Jot an errand or checklist item. Add a reminder, or turn it into a quest.",
-            style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+            style = MaterialTheme.typography.bodySmall, color = Muted,
         )
         Spacer(Modifier.height(8.dp))
 
@@ -74,7 +73,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 item {
                     Text(
                         "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…",
-                        color = Color.Gray, style = MaterialTheme.typography.bodyMedium,
+                        color = Muted, style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
@@ -167,7 +166,7 @@ private fun NoteCard(
                 Text(
                     note.text,
                     modifier = Modifier.weight(1f),
-                    color = if (note.done) Color.Gray else Parchment,
+                    color = if (note.done) Muted else Parchment,
                     textDecoration = if (note.done) TextDecoration.LineThrough else null,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -184,7 +183,7 @@ private fun NoteCard(
                         if (note.questId != null) append("  ·  ⚔️")
                         if (note.docId != null) append("  ·  📜")
                     },
-                    style = MaterialTheme.typography.labelSmall, color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall, color = Muted,
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -198,7 +197,7 @@ private fun NoteCard(
                     TextButton(onClick = onArchive) { Text("→ Archive", style = MaterialTheme.typography.labelSmall) }
                 }
                 TextButton(onClick = onDelete) {
-                    Text("Delete", style = MaterialTheme.typography.labelSmall, color = Color(0xFFB3452B))
+                    Text("Delete", style = MaterialTheme.typography.labelSmall, color = Ember)
                 }
             }
         }

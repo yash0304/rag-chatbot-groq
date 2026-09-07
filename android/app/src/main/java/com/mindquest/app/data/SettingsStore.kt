@@ -53,6 +53,13 @@ class SettingsStore(context: Context) {
     fun clearPin() { prefs.edit().remove(KEY_PIN).apply() }
     fun verifyPin(pin: String): Boolean = prefs.getString(KEY_PIN, null) == sha256(pin)
 
+    /**
+     * Biometric unlock is only ever an accelerator in front of the PIN, so it reports false
+     * whenever no PIN exists — that keeps the PIN as the one recoverable way back in.
+     */
+    fun biometricEnabled(): Boolean = hasPin() && prefs.getBoolean(KEY_BIOMETRIC, false)
+    fun setBiometricEnabled(enabled: Boolean) { prefs.edit().putBoolean(KEY_BIOMETRIC, enabled).apply() }
+
     // ---- backup reminder ----
     fun lastBackup(): Long = prefs.getLong(KEY_LAST_BACKUP, 0)
     fun recordBackup() { prefs.edit().putLong(KEY_LAST_BACKUP, System.currentTimeMillis()).apply() }
@@ -67,6 +74,7 @@ class SettingsStore(context: Context) {
         const val KEY_CHARS_IN = "sarvam_chars_in"
         const val KEY_CHARS_OUT = "sarvam_chars_out"
         const val KEY_PIN = "app_pin"
+        const val KEY_BIOMETRIC = "app_biometric"
         const val KEY_LAST_BACKUP = "last_backup"
         const val DEFAULT_MODEL = "sarvam-m"
     }

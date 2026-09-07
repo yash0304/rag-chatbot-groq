@@ -48,8 +48,14 @@ Legend: screens marked ✅ already exist in the web app and are being ported to 
 - [x] #23 Sarvam voice capture — record on-device → Saarika STT → import as a note.
 - [x] #26 Inbox ✅ — chat-style quick capture for errands/checklists, optional date+time
       reminder notification (WorkManager), and one-tap promotion to a Quest or the Archives.
-- [ ] #24 Biometric unlock (needs FragmentActivity) — PIN shipped; biometric deferred.
-- [ ] #25 Real embedding model for sharper search (optional upgrade over hashing embeddings).
+- [x] #24 Biometric unlock ✅ — androidx.biometric in front of the PIN; MainActivity is now a
+      FragmentActivity. Toggle only appears once a PIN exists; every failure falls back to PIN.
+- [x] #25 Sharper search ✅ — both halves done. Hybrid BM25 + embedding retrieval fused with
+      RRF, plus real 384-dim MiniLM-L6-v2 embeddings via ONNX Runtime on device. Model is
+      fetched by Gradle at build time (not committed); the app falls back to hashing vectors
+      whenever the assets or the native runtime are unavailable.
+- [x] #27 Theme uniformity ✅ — every hardcoded dark-theme colour replaced with contrast-checked
+      semantic tokens; full Material role set pinned in MindQuestLightColors.
 
 ## Explicitly out (offline)
 - Multi-user accounts, JWT, cross-device sync, hosted leaderboard — dropped or deferred.

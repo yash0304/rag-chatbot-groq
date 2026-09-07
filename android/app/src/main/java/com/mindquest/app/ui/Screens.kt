@@ -9,7 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
@@ -48,7 +47,7 @@ private fun StatTile(label: String, value: String, icon: String, modifier: Modif
             Spacer(Modifier.width(10.dp))
             Column {
                 Text(value, style = MaterialTheme.typography.titleLarge, color = Parchment)
-                Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(label, style = MaterialTheme.typography.labelSmall, color = Muted)
             }
         }
     }
@@ -80,18 +79,18 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
             }
         }
         item { Text("⚔️ Active quests", style = MaterialTheme.typography.titleMedium, color = Rune) }
-        if (quests.isEmpty()) item { Text("No active quests — visit the Quests tab.", color = Color.Gray) }
+        if (quests.isEmpty()) item { Text("No active quests — visit the Quests tab.", color = Muted) }
         items(quests.take(5)) { q ->
             Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(q.title); Text("+${q.xpReward} XP", color = Rune)
             } }
         }
         item { Text("🔥 Today's missions", style = MaterialTheme.typography.titleMedium, color = Rune) }
-        if (habits.isEmpty()) item { Text("No missions yet — forge one in the Habits tab.", color = Color.Gray) }
-        else if (pending.isEmpty()) item { Text("All missions complete. The campfires stay lit.", color = Color(0xFF6EE7B7)) }
+        if (habits.isEmpty()) item { Text("No missions yet — forge one in the Habits tab.", color = Muted) }
+        else if (pending.isEmpty()) item { Text("All missions complete. The campfires stay lit.", color = Verdant) }
         items(pending.take(5)) { h ->
             Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(h.title); Text("streak ${h.streak}", color = Color.Gray)
+                Text(h.title); Text("streak ${h.streak}", color = Muted)
             } }
         }
     }
@@ -132,11 +131,11 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             items(drafts) { q ->
                 Card { Column(Modifier.padding(12.dp)) {
                     Text(q.title, color = Parchment, fontWeight = FontWeight.Bold)
-                    q.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray) }
+                    q.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Muted) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("${q.difficulty} · +${q.xpReward} XP", style = MaterialTheme.typography.labelSmall, color = Rune)
                         Row {
-                            TextButton(onClick = { scope.launch { repo.abandonQuest(q.id) } }) { Text("Decline", color = Color.Gray) }
+                            TextButton(onClick = { scope.launch { repo.abandonQuest(q.id) } }) { Text("Decline", color = Muted) }
                             Button(onClick = { scope.launch { repo.acceptQuest(q.id) } }) { Text("Accept") }
                         }
                     }
@@ -167,7 +166,7 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             } }
         }
         item { Text("Active", style = MaterialTheme.typography.titleMedium, color = Rune) }
-        if (active.isEmpty()) item { Text("The board is clear.", color = Color.Gray) }
+        if (active.isEmpty()) item { Text("The board is clear.", color = Muted) }
         items(active) { q ->
             Card { Column(Modifier.padding(12.dp)) {
                 Text(q.title, color = Parchment)
@@ -191,7 +190,7 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             item { Text("Completed (${done.size})", style = MaterialTheme.typography.titleMedium, color = Rune) }
             items(done.take(10)) { q ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(q.title, color = Color.Gray); Text("+${q.xpReward}", color = Color.Gray)
+                    Text(q.title, color = Muted); Text("+${q.xpReward}", color = Muted)
                 }
             }
         }
@@ -230,18 +229,18 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 ) { Text("Forge") }
             } }
         }
-        if (habits.isEmpty()) item { Text("No missions yet. Small daily deeds build legends.", color = Color.Gray) }
+        if (habits.isEmpty()) item { Text("No missions yet. Small daily deeds build legends.", color = Muted) }
         items(habits) { h ->
             val doneToday = repo.isCheckedInToday(h)
             Card { Column(Modifier.padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(h.title, color = Parchment)
-                    TextButton(onClick = { scope.launch { repo.deleteHabit(h.id) } }) { Text("remove", color = Color.Gray) }
+                    TextButton(onClick = { scope.launch { repo.deleteHabit(h.id) } }) { Text("remove", color = Muted) }
                 }
-                Text("🔥 streak ${h.streak} · 🏔️ best ${h.bestStreak} · ${h.cadence}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Text("🔥 streak ${h.streak} · 🏔️ best ${h.bestStreak} · ${h.cadence}", style = MaterialTheme.typography.bodySmall, color = Muted)
                 Spacer(Modifier.height(6.dp))
                 if (doneToday) {
-                    Text("✓ Completed today", color = Color(0xFF6EE7B7))
+                    Text("✓ Completed today", color = Verdant)
                 } else {
                     Button(onClick = {
                         scope.launch {

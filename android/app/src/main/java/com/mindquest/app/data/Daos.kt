@@ -145,6 +145,10 @@ interface DocumentDao {
     @Insert
     suspend fun insertChunks(chunks: List<ChunkEntity>)
 
+    /** Rewrites existing rows — used when re-embedding after an embedder change. */
+    @Upsert
+    suspend fun upsertChunks(chunks: List<ChunkEntity>)
+
     @Query("DELETE FROM documents WHERE id = :id")
     suspend fun deleteDocument(id: String)
 
