@@ -1,70 +1,59 @@
-# HANDOFF — Mind Quest — 2026-09-05 (session 8)
+# HANDOFF — Mind Quest — 2026-09-07 (session 9)
 
 > Overwrite at the end of every session. Must let any model resume in under 2 minutes.
 
 ## Where we are
-- Offline Android app, 15 screens, no server. Branch `claude/ai-second-brain-rpg-dv5o75`
-  carries this session's work on top of `main`.
-- Backlog: 20/20 core done; post-v0.1 #21–#23 + #26 (Inbox) done; #24 (biometric) and
-  #25 (real embeddings) still open.
+- Offline Android app, 15 screens, no server. **The v0.1 backlog is fully closed** — MQ-1..20
+  plus post-v0.1 #21–#27. `main` is `f7ec390`; the working branch is synced to it.
+- Yash runs `com.mindquest.app.ci` (the CI-signed build). Latest release: `apk-8`, 84 MB.
 
 ## What happened this session
-- **Retheme to the "marginalia console" palette** (from Yash's uploaded .obj/.mtl): `ui/Theme.kt`
-  now maps the SAME variable names to a warm paper/terracotta scheme — `Rune` terracotta accent,
-  `Abyss` paper background, `Realm` cream card, `Parchment` ink text, plus `Brass`/`Sage`. Because
-  the names were kept, all screens re-skinned with no per-screen edits.
-- **New launcher icon**: adaptive vector console (`res/drawable/ic_launcher_bg.xml` +
-  `ic_launcher_foreground.xml`, `mipmap-anydpi-v26/ic_launcher{,_round}.xml`).
-- **Inbox (MQ-26)** — the feature Yash asked for: a chat window for errands/checklists with
-  date-based notifications.
-  - `data/Entities.kt`: `NoteEntity` (text, done, remindAt, questId, docId, createdAt).
-  - `data/Daos.kt`: `NoteDao`. DB → **v4** with additive `MIGRATION_3_4` (no data loss).
-  - `domain/Reminders.kt`: `Reminders` (channel, permission check, schedule/cancel by tag
-    `note-reminder-<id>`) + `ReminderWorker` posting the notification.
-  - `ui/InboxScreen.kt`: chat-style list + composer, ⏰ picker (native DatePicker → TimePicker),
-    per-note Remind/Unremind, → Quest, → Archive, Delete, done toggle.
-  - Repository: `observeNotes/addNote/setNoteDone/setNoteReminder/deleteNote/noteToQuest/
-    noteToArchive/openNoteCount`; notes added to `ExportBundle` + export/import.
-  - `MainActivity`: `Dest.Inbox` ("📥", second in the drawer) → `InboxScreen`.
-  - Deps: `androidx.work:work-runtime-ktx`, `androidx.core:core-ktx`; manifest
-    `POST_NOTIFICATIONS`.
-
-- **GitHub Actions now builds installable APKs** (`.github/workflows/android-apk.yml`) — Yash was
-  travelling with no laptop. New `sideload` build type, `applicationIdSuffix ".ci"`, so it installs
-  ALONGSIDE the Android Studio build and can't endanger existing data. Signing key comes from repo
-  secrets (public repo — nothing committed); no secrets = compile-only, no Release published.
-  Gradle wrapper pinned 9.0-milestone-1 → 8.9 (AGP 8.5.2 doesn't support Gradle 9).
+- **MQ-24 biometric unlock.** `domain/BiometricLock.kt` wraps androidx.biometric behind an
+  availability check; `MainActivity` is now a `FragmentActivity`. Strictly an accelerator in
+  front of the PIN — toggle only appears once a PIN exists, clearing the PIN disables it, every
+  failure path returns to the PIN field.
+- **MQ-27 theme uniformity.** ~60 leftover dark-theme literals (Tailwind emerald/rose/slate and
+  49 `Color.Gray`) replaced by semantic tokens in `ui/Theme.kt`; `MindQuestLightColors` pins the
+  full Material role set including the surfaceContainer ramp. Zero raw hex outside Theme.kt.
+- **MQ-25 complete, in two stages.** First `domain/Retrieval.kt` — BM25 over stemmed tokens fused
+  with the embedding cosine via Reciprocal Rank Fusion. Then `domain/TextEmbedder.kt` +
+  `domain/WordPiece.kt` — real 384-dim MiniLM-L6-v2 through ONNX Runtime on device.
+- **Build pipeline matured.** Model (22 MB) + vocab are downloaded by a Gradle task into
+  `assets/` at build time, never committed. Local signing now also reads
+  `sideloadKeystorePassword` from `~/.gradle/gradle.properties`.
 
 ## In-flight state
-- **The Inbox code now compiles** — run 1 of the APK workflow went green (~4 min, 38 MB APK).
-  This is the first real Kotlin compiler in the loop; before this, cloud changes were only
-  brace-balanced. Runtime behaviour is still unverified: `WorkManager` scheduling, the native
-  DatePicker→TimePicker chain, the `POST_NOTIFICATIONS` request.
-- Committed & pushed to `claude/ai-second-brain-rpg-dv5o75`.
-- **Blocked on Yash:** add secrets `SIDELOAD_KEYSTORE_BASE64` + `SIDELOAD_KEYSTORE_PASSWORD`
-  (Settings → Secrets and variables → Actions), then Actions → Android APK → Run workflow. The
-  keystore was generated in session 8; if lost, generate a new one and redo the export/import.
-- Data migration to the `.ci` app: export JSON from the old app → install new APK (installs
-  alongside) → import → verify → only then delete the old app. Sarvam key + PIN are NOT in the
-  export bundle (EncryptedSharedPreferences) and must be re-entered.
+- CI green and *verified in the logs*, not just by exit code: model and vocab download, ONNX
+  native libs (`libonnxruntime.so`, `libonnxruntime4j_jni.so`) package into the APK.
+- **Never run on device.** ONNX inference and the WordPiece tokenizer can only be validated on
+  real hardware. Symptom to watch for: search quality gets *worse* — that is the tokenizer
+  disagreeing with what MiniLM trained on. Rollback is `apk-4` (pre-MiniLM), installs over the top.
+- Reminders, biometrics and the retheme are also unverified on device as of this writing.
 
 ## Next action (starts next session)
-- If Yash reports a compile/runtime error, fix that first.
-- Otherwise: merge to `main`, then #24 biometric unlock (needs FragmentActivity +
-  androidx.biometric) or #25 real on-device embedding model.
-- Optional polish: screens still carrying hardcoded dark-theme accents (analytics heatmap empty
-  cells, chart backgrounds) under the new light palette.
+1. Ask Yash what Settings → Search index reports. `Hashing (built-in)` means the model did not
+   load — check logcat for the `MiniLmEmbedder` warning, likely an ABI or asset problem.
+2. If search regressed, suspect `WordPiece.kt` first (compare token ids against a known
+   HuggingFace tokenisation of the same sentence).
+3. Otherwise open work: bump AGP (8.5.2 is only tested to compileSdk 34, project is on 35) —
+   worth doing alone, not bundled with features.
 
 ## Open questions / waiting on Yash
-- Does the build compile? Test: Inbox → type "call the plumber" → ⏰ pick a time 2 min out → Add
-  → allow notifications → notification fires. Then "→ Quest" and "→ Archive" on a note.
-- Confirm the new palette + launcher icon look right on device (reboot refreshes the icon cache).
-- Sarvam Narrator still reported "unable to resolve hostname api.sarvam.ai" — the hostname is
-  correct (resolves to 20.235.220.20 from here), so this looks like device/network DNS. Unresolved.
+- Does the MiniLM model load on his device, and does search actually improve?
+- Do the reminder notifications, biometric prompt and new palette behave on device?
+- Sarvam Narrator previously failed with "unable to resolve hostname api.sarvam.ai". The
+  hostname is correct; it looked like device/network DNS. Unresolved, worth retrying now he is
+  off mobile data.
 
-## Build constraint
-- No Kotlin compiler in cloud; each change compiled by Yash in Android Studio.
+## Build constraint (relaxed this session)
+- CI compiles every push, so compile errors are caught before Yash pulls. Runtime behaviour
+  still needs his device. He now has laptop access again, so Android Studio is available too:
+  keystore at `android/sideload.keystore`, `sideloadKeystorePassword` in
+  `~/.gradle/gradle.properties`, and **Build Variant must be `sideload`** — the default `debug`
+  variant builds a different application id and looks like an empty app.
 
-## Data-safety note (asked last session)
-- `git pull` + install-over never wipes app data. Only **uninstalling** does. Take an in-app
-  Backup export before anything risky.
+## Data-safety notes
+- `git pull` and install-over never wipe app data. Only uninstalling does.
+- Sarvam key and PIN live in EncryptedSharedPreferences and are NOT in the JSON export bundle.
+- The signing keystore is the only thing that can update the installed app — if it is ever lost,
+  the way back is export → uninstall → install → import.
