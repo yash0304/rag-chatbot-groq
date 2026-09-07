@@ -22,11 +22,8 @@ android {
         versionName = "1.0.0"
         // Point at your MindQuest API deployment; 10.0.2.2 reaches the host from the emulator.
         buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000\"")
-
-        // ONNX Runtime ships native libs for four ABIs. Keeping only the two that real
-        // phones use halves what it adds to the APK; x86/x86_64 are emulator-only, so an
-        // emulator needs this line relaxed.
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Architecture selection lives in the `splits` block below. AGP rejects the build
+        // if ndk.abiFilters is set as well.
     }
 
     // Sideload signing: CI writes the keystore to this path from a repo secret. Without it
@@ -68,6 +65,19 @@ android {
             }
         }
     }
+    // One APK per CPU architecture instead of one fat APK carrying both. ONNX Runtime and
+    // ML Kit each ship a large .so per ABI, so a single-architecture APK drops roughly a
+    // quarter of the download — which matters when the only way to install is a phone
+    // pulling it over mobile data.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

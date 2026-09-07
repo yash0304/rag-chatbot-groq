@@ -142,6 +142,9 @@ interface DocumentDao {
     @Upsert
     suspend fun upsertDocument(doc: DocumentEntity)
 
+    @Query("SELECT * FROM documents WHERE id = :id")
+    suspend fun get(id: String): DocumentEntity?
+
     @Insert
     suspend fun insertChunks(chunks: List<ChunkEntity>)
 

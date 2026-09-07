@@ -1,12 +1,14 @@
 package com.mindquest.app
 
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import com.mindquest.app.data.GlobalKind
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.ui.*
 import kotlinx.coroutines.launch
@@ -59,6 +62,9 @@ fun MindQuestApp() {
 
     LaunchedEffect(Unit) {
         repo.seedIfEmpty()
+        // Give a category to anything captured before categories existed. Cheap keyword
+        // work, and it never overwrites a category the user has already set.
+        repo.backfillCategories()
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked
@@ -98,12 +104,45 @@ private fun OnboardingScreen(repo: MindQuestRepository, onDone: () -> Unit) {
 
 @Composable
 private fun HomeShell(repo: MindQuestRepository) {
-    var dest by remember { mutableStateOf(Dest.Dashboard) }
+    // A real back stack, so Back returns to the previous screen instead of quitting.
+    // Dashboard is the floor: pressing Back there falls through to the system, which is
+    // the one place leaving the app is the expected outcome.
+    val backStack = remember { mutableStateListOf(Dest.Dashboard) }
+    val dest = backStack.last()
     val profile by repo.observeProfile().collectAsState(initial = null)
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var searchOpen by remember { mutableStateOf(false) }
     val notify: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
+
+    fun go(target: Dest) {
+        // Revisiting a screen moves it to the top rather than stacking duplicates, so Back
+        // never walks through the same screen twice.
+        backStack.remove(target)
+        backStack.add(target)
+    }
+
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    BackHandler(enabled = !drawer.isOpen && backStack.size > 1) { backStack.removeAt(backStack.lastIndex) }
+
+    if (searchOpen) {
+        GlobalSearchSheet(
+            repo = repo,
+            onDismiss = { searchOpen = false },
+            onOpen = { kind ->
+                go(
+                    when (kind) {
+                        GlobalKind.Note -> Dest.Inbox
+                        GlobalKind.Document -> Dest.Archives
+                        GlobalKind.Quest -> Dest.Quests
+                        GlobalKind.Habit -> Dest.Habits
+                        GlobalKind.Goal -> Dest.Goals
+                    },
+                )
+            },
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawer,
@@ -124,7 +163,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                             icon = { Text(d.icon) },
                             label = { Text(d.label) },
                             selected = dest == d,
-                            onClick = { dest = d; scope.launch { drawer.close() } },
+                            onClick = { go(d); scope.launch { drawer.close() } },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                         )
                     }
@@ -144,6 +183,9 @@ private fun HomeShell(repo: MindQuestRepository) {
                         Icon(Icons.Filled.Menu, contentDescription = "Menu", tint = Rune)
                     }
                     Text(dest.label, style = MaterialTheme.typography.titleLarge, color = Rune, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { searchOpen = true }) {
+                        Icon(Icons.Filled.Search, contentDescription = "Search everything", tint = Rune)
+                    }
                     profile?.let { Text("Lv ${it.level} · ${it.skillPoints}✨", style = MaterialTheme.typography.bodySmall) }
                     Spacer(Modifier.width(8.dp))
                 }

@@ -5,11 +5,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.room.withTransaction
 import com.mindquest.app.domain.Catalogs
+import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
 import com.mindquest.app.domain.Embedders
+import com.mindquest.app.domain.HashingEmbedder
 import com.mindquest.app.domain.Reminders
 import com.mindquest.app.domain.Retrieval
 import com.mindquest.app.domain.SarvamClient
@@ -67,6 +69,23 @@ data class PersonalBests(
 )
 
 data class SearchHit(val title: String, val snippet: String, val location: String?, val score: Float)
+
+/** Where a global-search hit lives, so the result can say which screen to open. */
+enum class GlobalKind(val label: String, val icon: String) {
+    Note("Inbox", "📥"),
+    Document("Archives", "📜"),
+    Quest("Quests", "⚔️"),
+    Habit("Daily Missions", "🔥"),
+    Goal("Story Arcs", "📖"),
+}
+
+data class GlobalHit(
+    val kind: GlobalKind,
+    val title: String,
+    val subtitle: String,
+    val refId: String?,
+    val score: Float = 0f,
+)
 
 data class GraphNode(val id: String, val label: String, val type: String, val size: Int)
 data class GraphEdge(val source: String, val target: String, val weight: Int)
@@ -482,7 +501,7 @@ class MindQuestRepository(private val context: Context) {
         documentDao.upsertDocument(
             DocumentEntity(
                 id = id, title = name, filename = name, mimeType = mime, status = "ready",
-                summary = Ingestion.summarize(fullText), domain = Ingestion.domain(fullText),
+                summary = Ingestion.summarize(fullText), domain = Categories.classify(fullText),
                 tagsCsv = Ingestion.tags(fullText).joinToString(","),
                 ocrUsed = ocrUsed, charCount = fullText.length, chunkCount = chunks.size,
             ),
@@ -519,6 +538,7 @@ class MindQuestRepository(private val context: Context) {
             textOf = { it.text },
             vectorOf = { Embeddings.fromCsv(it.vectorCsv) },
             limit = limit,
+            semanticVectors = embedder !== HashingEmbedder,
         ).map { (chunk, score) ->
             SearchHit(docs.getValue(chunk.documentId).title, chunk.text.take(300), chunk.location, score)
         }
@@ -800,7 +820,10 @@ class MindQuestRepository(private val context: Context) {
     /** Capture a line of text; optionally schedule a reminder notification. */
     suspend fun addNote(text: String, remindAt: Long? = null): String {
         val id = UUID.randomUUID().toString()
-        noteDao.upsert(NoteEntity(id = id, text = text.trim(), remindAt = remindAt))
+        val body = text.trim()
+        noteDao.upsert(
+            NoteEntity(id = id, text = body, remindAt = remindAt, category = Categories.classify(body)),
+        )
         if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
         return id
     }
@@ -835,6 +858,7 @@ class MindQuestRepository(private val context: Context) {
                 id = questId, title = note.text.take(255), difficulty = diff,
                 xpReward = Catalogs.difficultyXp.getValue(diff), status = "active",
                 source = "manual", dueAt = note.remindAt,
+                category = note.category ?: Categories.classify(note.text),
             ),
         )
         noteDao.upsert(note.copy(questId = questId))
@@ -851,6 +875,121 @@ class MindQuestRepository(private val context: Context) {
     }
 
     suspend fun openNoteCount(): Int = noteDao.openCount()
+
+    /** Override the auto-guessed category on a note. */
+    suspend fun setNoteCategory(id: String, category: String) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(category = category, categoryLocked = true))
+    }
+
+    suspend fun setQuestCategory(id: String, category: String) {
+        val quest = questDao.get(id) ?: return
+        questDao.upsert(quest.copy(category = category, categoryLocked = true))
+    }
+
+    suspend fun setDocumentCategory(id: String, category: String) {
+        val doc = documentDao.get(id) ?: return
+        documentDao.upsertDocument(doc.copy(domain = category, domainLocked = true))
+    }
+
+    /**
+     * Give a category to everything captured before categories existed, and to documents
+     * still carrying the old "Something Realm" placeholder domain. Runs once at startup:
+     * classification is keyword matching, so even a few hundred items cost milliseconds,
+     * and anything already categorised is left alone — a user's own correction is never
+     * overwritten.
+     */
+    suspend fun backfillCategories(): Int = withContext(Dispatchers.IO) {
+        val known = Categories.all.map { it.id }.toSet()
+        val storedRevision = settings.categoriesRevision()
+        val vocabularyChanged = storedRevision < Categories.REVISION
+        var changed = 0
+
+        // Re-sort when the vocabulary improved, otherwise only fill in what has no category
+        // at all. Either way, anything the user set by hand is left exactly as they left it.
+        noteDao.allNotes()
+            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
+            .forEach {
+                val guess = Categories.classify(it.text)
+                if (guess != it.category) { noteDao.upsert(it.copy(category = guess)); changed++ }
+            }
+
+        questDao.allQuests()
+            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
+            .forEach {
+                val text = listOfNotNull(it.title, it.description).joinToString(" ")
+                val guess = Categories.classify(text)
+                if (guess != it.category) { questDao.upsert(it.copy(category = guess)); changed++ }
+            }
+
+        documentDao.allDocuments()
+            .filter { !it.domainLocked && (it.domain !in known || vocabularyChanged) }
+            .forEach { doc ->
+                // Classify from title + summary; the full text lives in chunks and re-reading
+                // every one of them at startup would not be worth the milliseconds.
+                val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
+                val guess = Categories.classify(text)
+                if (guess != doc.domain) { documentDao.upsertDocument(doc.copy(domain = guess)); changed++ }
+            }
+
+        settings.setCategoriesRevision(Categories.REVISION)
+        changed
+    }
+
+    // ---------- global search ----------
+
+    /**
+     * Search everything at once — notes, archives, quests, missions and arcs — so a half
+     * remembered thing can be found without first knowing which screen it lives on.
+     *
+     * Archives go through the full semantic pipeline. The rest are short titles where a
+     * substring match is both sufficient and predictable; running a transformer over a
+     * dozen quest titles would cost more than it could possibly add.
+     */
+    suspend fun searchEverything(query: String, perKind: Int = 5): List<GlobalHit> =
+        withContext(Dispatchers.IO) {
+            val q = query.trim()
+            if (q.isBlank()) return@withContext emptyList()
+            val needle = q.lowercase()
+            val hits = mutableListOf<GlobalHit>()
+
+            noteDao.allNotes()
+                .filter { needle in it.text.lowercase() }
+                .sortedByDescending { it.createdAt }
+                .take(perKind)
+                .forEach {
+                    hits += GlobalHit(
+                        kind = GlobalKind.Note, title = it.text.take(120),
+                        subtitle = Categories.of(it.category).let { c -> "${c.icon} ${c.label}" } +
+                            if (it.done) " · done" else "",
+                        refId = it.id,
+                    )
+                }
+
+            search(q, perKind).forEach {
+                hits += GlobalHit(
+                    kind = GlobalKind.Document, title = it.title,
+                    subtitle = it.snippet.take(120), refId = null, score = it.score,
+                )
+            }
+
+            questDao.allQuests()
+                .filter { needle in it.title.lowercase() }
+                .take(perKind)
+                .forEach { hits += GlobalHit(GlobalKind.Quest, it.title, it.status, it.id) }
+
+            habitDao.allHabits()
+                .filter { needle in it.title.lowercase() }
+                .take(perKind)
+                .forEach { hits += GlobalHit(GlobalKind.Habit, it.title, "🔥 ${it.streak}", it.id) }
+
+            goalDao.allGoals()
+                .filter { needle in it.title.lowercase() }
+                .take(perKind)
+                .forEach { hits += GlobalHit(GlobalKind.Goal, it.title, it.status, it.id) }
+
+            hits
+        }
 
     private companion object {
         /** Chunks re-embedded per database write during a reindex. */

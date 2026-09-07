@@ -60,20 +60,34 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:assembleSideload
 
-      - name: Stage APK
+      - name: Stage APKs
         id: apk
         run: |
-          src=android/app/build/outputs/apk/sideload/app-sideload.apk
-          test -f "$src" || { echo "APK not found at $src"; find android/app/build/outputs -name '*.apk'; exit 1; }
-          out="MindQuest-${{ github.run_number }}.apk"
-          cp "$src" "$out"
-          echo "path=$out" >> "$GITHUB_OUTPUT"
-          ls -lh "$out"
+          dir=android/app/build/outputs/apk/sideload
+          n="${{ github.run_number }}"
+          mkdir -p out
+          # One APK per architecture. arm64 is listed first so it is the top asset on the
+          # release page — it is what every phone from roughly 2017 onward needs.
+          declare -A names=( [arm64-v8a]="arm64" [armeabi-v7a]="arm32" )
+          found=0
+          for abi in arm64-v8a armeabi-v7a; do
+            src="$dir/app-$abi-sideload.apk"
+            if [ -f "$src" ]; then
+              cp "$src" "out/MindQuest-$n-${names[$abi]}.apk"
+              found=$((found+1))
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No split APKs found; falling back to the fat APK."
+            find "$dir" -name '*.apk'
+            cp "$dir/app-sideload.apk" "out/MindQuest-$n.apk"
+          fi
+          ls -lh out/
 
       - uses: actions/upload-artifact@v4
         with:
           name: MindQuest-apk-${{ github.run_number }}
-          path: ${{ steps.apk.outputs.path }}
+          path: out/*.apk
 
       - name: Publish Release
         if: steps.keystore.outputs.signed == 'true'
@@ -85,7 +99,9 @@ jobs:
             --target "${{ github.sha }}" \
             --notes "Built from \`${{ github.ref_name }}\` (${{ github.sha }}).
 
-          Installs as a separate app (\`com.mindquest.app.ci\`) alongside any Android Studio build.
-          Download the .apk below on your phone and tap it to install." \
-            "${{ steps.apk.outputs.path }}"
+          **Take the \`-arm64\` APK** unless your phone is genuinely 32-bit — one APK per CPU
+          architecture, so each is much smaller than a combined build.
+
+          Installs as \`com.mindquest.app.ci\`, alongside any Android Studio build." \
+            out/*.apk
           echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/latest"
