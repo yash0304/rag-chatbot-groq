@@ -3,6 +3,19 @@
 Newest first. Format: `YYYY-MM-DD — [AREA] Decision. (Why.)`
 Never delete a superseded decision — add a new dated line.
 
+2026-09-07 — [SEARCH] **MiniLM runs on device; the model is downloaded at build time, not
+committed (MQ-25 complete).** all-MiniLM-L6-v2 (quantised ONNX, 384-dim) now produces the chunk
+and query vectors, with mean pooling over the attention mask and L2 normalisation. Three
+deliberate choices: (1) the 23 MB model is fetched by a Gradle task into `assets/` rather than
+committed — the repo is public and that binary would live in its history forever — and the task is
+non-fatal, so a network-less build still ships a working app; (2) `WordPiece.kt` reproduces
+HuggingFace `BertTokenizer` step for step, because a tokenizer that disagrees with the training one
+produces embeddings that are quietly wrong rather than visibly broken; (3) every layer degrades to
+`HashingEmbedder` — missing asset, `UnsatisfiedLinkError`, failed inference — so the worst case is
+the old search quality, never a crash. Existing 256-dim chunks stay findable via BM25 until the
+Settings "Rebuild search index" action re-embeds them. ABIs trimmed to arm64-v8a + armeabi-v7a
+(x86 is emulator-only) to halve what ONNX Runtime adds to the APK.
+
 2026-09-06 — [SEARCH] **Sharper search is staged: BM25 hybrid now, neural model later (MQ-25).**
 Yash is travelling on intermittent network, and a bundled MiniLM would take the APK from ~60 MB to
 ~100 MB per update while adding inference code that cannot be verified anywhere but his phone.

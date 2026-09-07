@@ -28,7 +28,10 @@ android {
     // Sideload signing: CI writes the keystore to this path from a repo secret. Without it
     // (i.e. any local build) we fall back to the debug key so nothing breaks.
     val sideloadStore = rootProject.file("sideload.keystore")
+    // Env var in CI; a Gradle property locally, because Android Studio launched from a
+    // desktop icon does not inherit the shell environment.
     val sideloadPassword = System.getenv("SIDELOAD_KEYSTORE_PASSWORD")
+        ?: providers.gradleProperty("sideloadKeystorePassword").orNull
     val hasSideloadKey = sideloadStore.exists() && !sideloadPassword.isNullOrBlank()
 
     signingConfigs {
