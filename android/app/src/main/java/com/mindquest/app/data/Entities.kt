@@ -1,5 +1,6 @@
 package com.mindquest.app.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import kotlinx.serialization.Serializable
 import androidx.room.Index
@@ -46,6 +47,7 @@ data class QuestEntity(
     val source: String = "manual", // manual|ai
     val goalId: String? = null,
     val category: String? = null, // life category, same vocabulary as notes and documents
+    @ColumnInfo(defaultValue = "0") val categoryLocked: Boolean = false,
     val dueAt: Long? = null,
     val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
@@ -144,7 +146,8 @@ data class DocumentEntity(
     val status: String = "processing", // processing|ready|failed
     val error: String? = null,
     val summary: String? = null,
-    val domain: String? = null,
+    val domain: String? = null, // life category id (Categories)
+    @ColumnInfo(defaultValue = "0") val domainLocked: Boolean = false,
     val tagsCsv: String = "", // comma-separated tags (single-user; avoids a join table)
     val ocrUsed: Boolean = false,
     val charCount: Int = 0,
@@ -187,6 +190,8 @@ data class NoteEntity(
     val questId: String? = null, // set once promoted to a quest
     val docId: String? = null, // set once saved to the archives
     val category: String? = null, // Categories.classify() guess; user can override
+    /** True once the user has picked a category by hand — auto-classification must not undo that. */
+    @ColumnInfo(defaultValue = "0") val categoryLocked: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

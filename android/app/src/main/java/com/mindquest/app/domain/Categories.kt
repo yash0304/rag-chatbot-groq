@@ -15,6 +15,7 @@ object Categories {
 
     val all = listOf(
         Category("travel", "Travelling", "🧭"),
+        Category("places", "Places", "📍"),
         Category("shopping", "Shopping", "🛒"),
         Category("money", "Money", "💰"),
         Category("health", "Health", "🌿"),
@@ -26,6 +27,13 @@ object Categories {
         Category("admin", "Admin", "🗂️"),
         Category("general", "General", "📌"),
     )
+
+    /**
+     * Bump whenever the keyword lists below change. Anything the user has not categorised
+     * by hand is re-sorted on the next launch, so improvements to the vocabulary reach
+     * existing notes instead of only new ones.
+     */
+    const val REVISION = 2
 
     private val byId = all.associateBy { it.id }
 
@@ -45,9 +53,15 @@ object Categories {
             "baggage", "taxi", "cab", "uber", "ola", "bus", "metro", "route", "departure",
             "arrival", "vacation", "holiday", "sightseeing", "safari", "trek", "camp",
         ),
+        "places" to listOf(
+            "dhaba", "restaurant", "cafe", "eatery", "bakery", "homestay", "guesthouse",
+            "hostel", "viewpoint", "waterfall", "beach", "temple", "fort", "museum",
+            "market", "bazaar", "street", "spot", "place", "joint", "stall",
+        ),
         "shopping" to listOf(
             "buy", "shop", "shopping", "cart", "order", "amazon", "flipkart", "delivery",
             "grocery", "groceries", "purchase", "mall", "store", "discount", "sale", "offer",
+            "milk", "eggs", "rice", "vegetables", "fruit", "bread", "snack",
             "coupon", "return", "refund", "size", "brand",
         ),
         "money" to listOf(
@@ -76,13 +90,14 @@ object Categories {
         ),
         "people" to listOf(
             "call", "birthday", "anniversary", "wedding", "friend", "family", "mother",
-            "father", "sister", "brother", "wife", "husband", "gift", "visit", "invite",
+            "father", "sister", "brother", "wife", "husband", "gift", "invite",
             "message", "reply", "meet",
         ),
+        // Cooking only. Groceries are Shopping and restaurants are Places — lumping all
+        // three together was what made "Gokul Dhaba, must visit" look like a food errand.
         "food" to listOf(
-            "food", "eat", "lunch", "dinner", "breakfast", "recipe", "cook", "restaurant",
-            "menu", "milk", "eggs", "rice", "vegetables", "fruit", "snack", "tea", "coffee",
-            "order food", "swiggy", "zomato",
+            "recipe", "cook", "cooking", "bake", "marinate", "boil", "fry", "ingredient",
+            "portion", "leftovers", "meal prep",
         ),
         "admin" to listOf(
             "aadhaar", "pan", "licence", "license", "renew", "renewal", "form", "apply",
@@ -91,21 +106,40 @@ object Categories {
         ),
     )
 
+    /**
+     * Words that mark a note as a recommendation rather than a plan. These are what
+     * separate "Gokul Dhaba Colaba — must visit" (a place worth remembering) from
+     * "book the resort for the 14th" (a trip to arrange), even though both name a venue.
+     */
+    private val recommendation = listOf(
+        "must", "visit", "worth", "try", "recommend", "recommended", "best", "favourite",
+        "favorite", "loved", "amazing", "famous", "underrated",
+    )
+
     /** Best-guess category id for a piece of text. Falls back to "general". */
     fun classify(text: String): String {
         val tokens = Retrieval.tokenize(text).toSet()
         if (tokens.isEmpty()) return "general"
 
-        var bestId = "general"
-        var bestScore = 0
-        for ((id, words) in keywords) {
+        fun hits(words: List<String>) = words.count { keyword ->
             // Compare on stems so "flights", "booking" and "tickets" match their roots.
-            val score = words.count { keyword ->
-                val stemmed = Retrieval.tokenize(keyword)
-                stemmed.isNotEmpty() && stemmed.all { it in tokens }
-            }
-            if (score > bestScore) { bestScore = score; bestId = id }
+            val stemmed = Retrieval.tokenize(keyword)
+            stemmed.isNotEmpty() && stemmed.all { it in tokens }
         }
-        return bestId
+
+        val scores = LinkedHashMap<String, Int>()
+        for ((id, words) in keywords) {
+            val score = hits(words)
+            if (score > 0) scores[id] = score
+        }
+
+        // A venue named alongside a recommendation is a place worth keeping, not a journey
+        // to organise. The boost is deliberately larger than one keyword so it can outweigh
+        // the travel words a venue note usually also contains ("stay", "hotel").
+        if (hits(recommendation) > 0 && (scores["places"] ?: 0) > 0) {
+            scores["places"] = scores.getValue("places") + 2
+        }
+
+        return scores.maxByOrNull { it.value }?.key ?: "general"
     }
 }

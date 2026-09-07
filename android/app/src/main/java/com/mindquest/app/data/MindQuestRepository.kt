@@ -879,17 +879,17 @@ class MindQuestRepository(private val context: Context) {
     /** Override the auto-guessed category on a note. */
     suspend fun setNoteCategory(id: String, category: String) {
         val note = noteDao.get(id) ?: return
-        noteDao.upsert(note.copy(category = category))
+        noteDao.upsert(note.copy(category = category, categoryLocked = true))
     }
 
     suspend fun setQuestCategory(id: String, category: String) {
         val quest = questDao.get(id) ?: return
-        questDao.upsert(quest.copy(category = category))
+        questDao.upsert(quest.copy(category = category, categoryLocked = true))
     }
 
     suspend fun setDocumentCategory(id: String, category: String) {
         val doc = documentDao.get(id) ?: return
-        documentDao.upsertDocument(doc.copy(domain = category))
+        documentDao.upsertDocument(doc.copy(domain = category, domainLocked = true))
     }
 
     /**
@@ -901,24 +901,38 @@ class MindQuestRepository(private val context: Context) {
      */
     suspend fun backfillCategories(): Int = withContext(Dispatchers.IO) {
         val known = Categories.all.map { it.id }.toSet()
+        val storedRevision = settings.categoriesRevision()
+        val vocabularyChanged = storedRevision < Categories.REVISION
         var changed = 0
 
-        noteDao.allNotes().filter { it.category == null }.forEach {
-            noteDao.upsert(it.copy(category = Categories.classify(it.text)))
-            changed++
-        }
-        questDao.allQuests().filter { it.category == null }.forEach {
-            val text = listOfNotNull(it.title, it.description).joinToString(" ")
-            questDao.upsert(it.copy(category = Categories.classify(text)))
-            changed++
-        }
-        documentDao.allDocuments().filter { it.domain !in known }.forEach { doc ->
-            // Classify from title + summary; the full text lives in chunks and re-reading
-            // every one of them at startup would not be worth the milliseconds.
-            val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
-            documentDao.upsertDocument(doc.copy(domain = Categories.classify(text)))
-            changed++
-        }
+        // Re-sort when the vocabulary improved, otherwise only fill in what has no category
+        // at all. Either way, anything the user set by hand is left exactly as they left it.
+        noteDao.allNotes()
+            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
+            .forEach {
+                val guess = Categories.classify(it.text)
+                if (guess != it.category) { noteDao.upsert(it.copy(category = guess)); changed++ }
+            }
+
+        questDao.allQuests()
+            .filter { !it.categoryLocked && (it.category == null || vocabularyChanged) }
+            .forEach {
+                val text = listOfNotNull(it.title, it.description).joinToString(" ")
+                val guess = Categories.classify(text)
+                if (guess != it.category) { questDao.upsert(it.copy(category = guess)); changed++ }
+            }
+
+        documentDao.allDocuments()
+            .filter { !it.domainLocked && (it.domain !in known || vocabularyChanged) }
+            .forEach { doc ->
+                // Classify from title + summary; the full text lives in chunks and re-reading
+                // every one of them at startup would not be worth the milliseconds.
+                val text = listOfNotNull(doc.title, doc.summary).joinToString(" ")
+                val guess = Categories.classify(text)
+                if (guess != doc.domain) { documentDao.upsertDocument(doc.copy(domain = guess)); changed++ }
+            }
+
+        settings.setCategoriesRevision(Categories.REVISION)
         changed
     }
 
