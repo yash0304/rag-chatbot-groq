@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
+import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -41,6 +42,14 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     var pendingRemind by remember { mutableStateOf<Long?>(null) }
+    // The category is shown before the note is sent, not applied silently afterwards. It
+    // tracks what you type until you touch it, and once touched it stops second-guessing you.
+    var pendingCategory by remember { mutableStateOf("general") }
+    var categoryChosen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(input, categoryChosen) {
+        if (!categoryChosen) pendingCategory = Categories.classify(input)
+    }
 
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -118,6 +127,17 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             )
         }
 
+        if (input.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (categoryChosen) "Filing under" else "Looks like",
+                    style = MaterialTheme.typography.labelSmall, color = Muted,
+                )
+                Spacer(Modifier.width(6.dp))
+                CategoryChip(pendingCategory) { pendingCategory = it; categoryChosen = true }
+            }
+        }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = input,
@@ -140,8 +160,10 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 onClick = {
                     val t = input.trim()
                     val at = pendingRemind
-                    input = ""; pendingRemind = null
-                    scope.launch { repo.addNote(t, at) }
+                    val cat = pendingCategory
+                    val chosen = categoryChosen
+                    input = ""; pendingRemind = null; categoryChosen = false
+                    scope.launch { repo.addNote(t, at, cat, chosen) }
                 },
             ) { Text("Add") }
         }

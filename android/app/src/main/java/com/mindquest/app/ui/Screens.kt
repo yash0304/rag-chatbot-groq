@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.ProfileEntity
 import com.mindquest.app.domain.Catalogs
+import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.GameEngine
 import kotlinx.coroutines.launch
 
@@ -112,6 +113,12 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val done = quests.filter { it.status == "completed" }
     var generating by remember { mutableStateOf(false) }
     var categoryFilter by remember { mutableStateOf<String?>(null) }
+    // Same rule as the Inbox: the category is visible and changeable before the quest exists.
+    var newCategory by remember { mutableStateOf("general") }
+    var categoryChosen by remember { mutableStateOf(false) }
+    LaunchedEffect(title, categoryChosen) {
+        if (!categoryChosen) newCategory = Categories.classify(title)
+    }
     val shownActive = active.filter { categoryFilter == null || it.category == categoryFilter }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -156,11 +163,24 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         )
                     }
                 }
+                if (title.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (categoryChosen) "Filing under" else "Looks like",
+                            style = MaterialTheme.typography.labelSmall, color = Muted,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        CategoryChip(newCategory) { newCategory = it; categoryChosen = true }
+                    }
+                }
                 Button(
                     onClick = {
                         if (title.isNotBlank()) {
                             val t = title; title = ""
-                            scope.launch { repo.createQuest(t, difficulty) }
+                            val cat = newCategory
+                            val chosen = categoryChosen
+                            categoryChosen = false
+                            scope.launch { repo.createQuest(t, difficulty, category = cat, categoryChosen = chosen) }
                         }
                     },
                     modifier = Modifier.align(Alignment.End),

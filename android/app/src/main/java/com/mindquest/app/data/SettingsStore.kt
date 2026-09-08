@@ -60,10 +60,6 @@ class SettingsStore(context: Context) {
     fun biometricEnabled(): Boolean = hasPin() && prefs.getBoolean(KEY_BIOMETRIC, false)
     fun setBiometricEnabled(enabled: Boolean) { prefs.edit().putBoolean(KEY_BIOMETRIC, enabled).apply() }
 
-    /** Classifier vocabulary the stored categories were produced by (Categories.REVISION). */
-    fun categoriesRevision(): Int = prefs.getInt(KEY_CAT_REVISION, 0)
-    fun setCategoriesRevision(revision: Int) { prefs.edit().putInt(KEY_CAT_REVISION, revision).apply() }
-
     // ---- backup reminder ----
     fun lastBackup(): Long = prefs.getLong(KEY_LAST_BACKUP, 0)
     fun recordBackup() { prefs.edit().putLong(KEY_LAST_BACKUP, System.currentTimeMillis()).apply() }
@@ -80,7 +76,6 @@ class SettingsStore(context: Context) {
         const val KEY_PIN = "app_pin"
         const val KEY_BIOMETRIC = "app_biometric"
         const val KEY_LAST_BACKUP = "last_backup"
-        const val KEY_CAT_REVISION = "categories_revision"
         const val DEFAULT_MODEL = "sarvam-m"
     }
 }
