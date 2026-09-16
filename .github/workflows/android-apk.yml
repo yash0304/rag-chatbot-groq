@@ -34,7 +34,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # `packages` defaults to "tools platform-tools", and the `tools` package no longer
+      # exists in Google's repository, so the default makes sdkmanager exit 1. The runner
+      # image already ships the Android SDK; only platform-tools needs ensuring.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - uses: gradle/actions/setup-gradle@v4
 
