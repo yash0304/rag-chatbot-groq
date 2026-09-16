@@ -16,7 +16,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.WeeklyReviewEntity
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.mindquest.app.domain.BiometricLock
+import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 
 // ---------- Narrator (chat) ----------
@@ -180,6 +184,72 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         Card { Column(Modifier.padding(14.dp)) {
             Text("Sarvam usage", fontWeight = FontWeight.Bold, color = Parchment)
             Text("${usage.first} calls · ${usage.second} chars in · ${usage.third} chars out", style = MaterialTheme.typography.bodySmall, color = Muted)
+        } }
+
+        var phone by remember { mutableStateOf(s.reminderPhone().orEmpty()) }
+        var smsOn by remember { mutableStateOf(s.smsRemindersEnabled()) }
+        var repeatOn by remember { mutableStateOf(s.repeatUntilDone()) }
+        val smsPermission = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) {
+                s.setSmsRemindersEnabled(true); smsOn = true; notify("Reminders will also text you.")
+            } else {
+                notify("Without SMS permission reminders can only use notifications.")
+            }
+        }
+        Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Reminder delivery", fontWeight = FontWeight.Bold, color = Parchment)
+            Text(
+                "A notification is gone the moment you swipe it. A text sits in your inbox until you read it.",
+                style = MaterialTheme.typography.bodySmall, color = Muted,
+            )
+            OutlinedTextField(
+                phone, { phone = it },
+                label = { Text("Your number (with country code)") },
+                placeholder = { Text("+9198XXXXXXXX") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                enabled = phone.isNotBlank(),
+                onClick = { s.saveReminderPhone(phone); notify("Number saved.") },
+            ) { Text("Save number") }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = smsOn,
+                    enabled = s.reminderPhone() != null,
+                    onCheckedChange = { want ->
+                        if (!want) {
+                            s.setSmsRemindersEnabled(false); smsOn = false
+                        } else if (Reminders.hasSmsPermission(context)) {
+                            s.setSmsRemindersEnabled(true); smsOn = true
+                        } else {
+                            smsPermission.launch(Manifest.permission.SEND_SMS)
+                        }
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Also text me the reminder", color = Parchment, style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                "Sent over the mobile network, not the internet. Your carrier's usual SMS charge applies.",
+                style = MaterialTheme.typography.labelSmall, color = Muted,
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = repeatOn,
+                    onCheckedChange = { s.setRepeatUntilDone(it); repeatOn = it },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Repeat until I tick it off", color = Parchment, style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                "Repeats every 15 minutes, up to ${Reminders.MAX_ATTEMPTS} times, and stops the moment the note is done.",
+                style = MaterialTheme.typography.labelSmall, color = Muted,
+            )
         } }
 
         var stale by remember { mutableStateOf(-1) }

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Colours are literal rather than theme tokens: a widget is drawn by the launcher's process,
+  where the app's Compose theme does not exist. These match the marginalia-console palette
+  by hand (paper ground, ink text, terracotta accent).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_background"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#C67139"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:text="Due today" />
+
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="6dp"
+        android:textColor="#6E6255"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="The road is clear." />
+
+    <TextView android:id="@+id/widget_row_1"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingTop="6dp" android:maxLines="1" android:ellipsize="end"
+        android:textColor="#2B2826" android:textSize="12sp" />
+
+    <TextView android:id="@+id/widget_row_2"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:textColor="#2B2826" android:textSize="12sp" />
+
+    <TextView android:id="@+id/widget_row_3"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:textColor="#2B2826" android:textSize="12sp" />
+
+    <TextView android:id="@+id/widget_row_4"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:textColor="#2B2826" android:textSize="12sp" />
+
+    <TextView android:id="@+id/widget_row_5"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:textColor="#2B2826" android:textSize="12sp" />
+</LinearLayout>

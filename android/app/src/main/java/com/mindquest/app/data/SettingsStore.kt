@@ -60,6 +60,22 @@ class SettingsStore(context: Context) {
     fun biometricEnabled(): Boolean = hasPin() && prefs.getBoolean(KEY_BIOMETRIC, false)
     fun setBiometricEnabled(enabled: Boolean) { prefs.edit().putBoolean(KEY_BIOMETRIC, enabled).apply() }
 
+    // ---- reminder delivery ----
+    /**
+     * Where reminders go. A notification you swipe away without reading is worth nothing,
+     * so the app can also text you — an SMS sits in the inbox until it is actually read.
+     */
+    fun reminderPhone(): String? = prefs.getString(KEY_PHONE, null)?.ifBlank { null }
+    fun saveReminderPhone(number: String) { prefs.edit().putString(KEY_PHONE, number.trim()).apply() }
+    fun clearReminderPhone() { prefs.edit().remove(KEY_PHONE).apply() }
+
+    fun smsRemindersEnabled(): Boolean = reminderPhone() != null && prefs.getBoolean(KEY_SMS, false)
+    fun setSmsRemindersEnabled(enabled: Boolean) { prefs.edit().putBoolean(KEY_SMS, enabled).apply() }
+
+    /** Keep nagging until the note is ticked off, rather than firing once and vanishing. */
+    fun repeatUntilDone(): Boolean = prefs.getBoolean(KEY_REPEAT, true)
+    fun setRepeatUntilDone(enabled: Boolean) { prefs.edit().putBoolean(KEY_REPEAT, enabled).apply() }
+
     // ---- backup reminder ----
     fun lastBackup(): Long = prefs.getLong(KEY_LAST_BACKUP, 0)
     fun recordBackup() { prefs.edit().putLong(KEY_LAST_BACKUP, System.currentTimeMillis()).apply() }
@@ -76,6 +92,9 @@ class SettingsStore(context: Context) {
         const val KEY_PIN = "app_pin"
         const val KEY_BIOMETRIC = "app_biometric"
         const val KEY_LAST_BACKUP = "last_backup"
+        const val KEY_PHONE = "reminder_phone"
+        const val KEY_SMS = "reminder_sms"
+        const val KEY_REPEAT = "reminder_repeat"
         const val DEFAULT_MODEL = "sarvam-m"
     }
 }
