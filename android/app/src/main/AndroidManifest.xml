@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- SEND_SMS is removed for now: Play Protect blocked the install of the build that
+         introduced it. It is the likely cause (the classic premium-SMS fraud signature) but
+         that build also added a widget receiver, so this changes one variable to be certain.
+         The SMS code stays in place and is simply inert without the permission. -->
+    <!-- <uses-permission android:name="android.permission.SEND_SMS" /> -->
 
     <application
         android:label="MindQuest"
@@ -18,5 +23,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".widget.TodayWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_today_info" />
+        </receiver>
     </application>
 </manifest>

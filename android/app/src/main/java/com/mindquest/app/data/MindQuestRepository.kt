@@ -15,6 +15,7 @@ import com.mindquest.app.domain.HashingEmbedder
 import com.mindquest.app.domain.Reminders
 import com.mindquest.app.domain.Retrieval
 import com.mindquest.app.domain.SarvamClient
+import com.mindquest.app.widget.TodayWidget
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -69,6 +70,16 @@ data class PersonalBests(
 )
 
 data class SearchHit(val title: String, val snippet: String, val location: String?, val score: Float)
+
+/** One line on the home-screen widget. Carries its id so the row can be ticked off there. */
+data class AgendaItem(
+    val id: String,
+    val title: String,
+    val dueAt: Long,
+    val overdue: Boolean,
+    val icon: String,
+    val isQuest: Boolean,
+)
 
 /** Where a global-search hit lives, so the result can say which screen to open. */
 enum class GlobalKind(val label: String, val icon: String) {
@@ -859,6 +870,7 @@ class MindQuestRepository(private val context: Context) {
             ),
         )
         if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
+        TodayWidget.refresh(context)
         return id
     }
 
@@ -866,6 +878,7 @@ class MindQuestRepository(private val context: Context) {
         val note = noteDao.get(id) ?: return
         noteDao.upsert(note.copy(done = done))
         if (done) Reminders.cancel(context, id) // no point nagging about a finished errand
+        TodayWidget.refresh(context)
     }
 
     /** Set or clear a note's reminder, rescheduling the notification. */
@@ -874,11 +887,13 @@ class MindQuestRepository(private val context: Context) {
         noteDao.upsert(note.copy(remindAt = remindAt))
         Reminders.cancel(context, id)
         if (remindAt != null) Reminders.schedule(context, id, note.text, remindAt)
+        TodayWidget.refresh(context)
     }
 
     suspend fun deleteNote(id: String) {
         Reminders.cancel(context, id)
         noteDao.delete(id)
+        TodayWidget.refresh(context)
     }
 
     /** Promote a note into a real quest (so finishing it earns XP). */
@@ -980,6 +995,43 @@ class MindQuestRepository(private val context: Context) {
         }
         changed
     }
+
+    // ---------- today's agenda (home-screen widget) ----------
+
+    /**
+     * Everything due by the end of today: outstanding notes with a reminder, and active
+     * quests with a deadline. Overdue items are included and marked, because something you
+     * missed yesterday is more urgent than something due this evening, not less.
+     */
+    suspend fun todayAgenda(limit: Int = 6): List<AgendaItem> = withContext(Dispatchers.IO) {
+        val endOfToday = LocalDate.now().plusDays(1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val now = System.currentTimeMillis()
+
+        val fromNotes = noteDao.allNotes()
+            .filter { !it.done && it.remindAt != null && it.remindAt <= endOfToday }
+            .map {
+                AgendaItem(
+                    it.id, it.text, it.remindAt!!, it.remindAt < now,
+                    Categories.of(it.category).icon, isQuest = false,
+                )
+            }
+
+        val fromQuests = questDao.allQuests()
+            .filter { it.status == "active" && it.dueAt != null && it.dueAt <= endOfToday }
+            .map { AgendaItem(it.id, it.title, it.dueAt!!, it.dueAt < now, "⚔️", isQuest = true) }
+
+        (fromNotes + fromQuests).sortedBy { it.dueAt }.take(limit)
+    }
+
+    /**
+     * Tick an agenda row off from the home screen. Completing a quest here is the real
+     * thing — the same XP, level-ups and achievements as completing it inside the app —
+     * because a tick that quietly counted for less would make the widget a lie.
+     * Returns XP awarded, or 0 for a plain note.
+     */
+    suspend fun completeAgendaItem(id: String, isQuest: Boolean): Int =
+        if (isQuest) completeQuest(id).xpAwarded else { setNoteDone(id, true); 0 }
 
     // ---------- global search ----------
 
