@@ -2,15 +2,18 @@
 <!--
   A page in a typewriter carriage.
 
-  serif-monospace resolves to Cutive Mono on Android — an actual typewriter face, uneven and
-  inky, rather than the engineered look of Roboto Mono. The rule under each row and the
-  dashed margin down the left do the rest.
+  serif-monospace resolves to Cutive Mono on Android — an actual typewriter face rather than
+  the engineered look of Roboto Mono. The rule under each row and the margin down the left
+  do the rest. No emoji: colour glyphs are the one thing that never came off a carriage.
 
-  No emoji anywhere: colour emoji are the one thing that breaks the illusion outright, since
-  nothing typed on a carriage was ever full colour.
+  Two constraints this layout has to respect, both of which broke an earlier version:
+   * RemoteViews only inflates an allowlist of view classes, and plain <View> is not on it.
+     Rules and spacers are ImageViews, which are.
+   * Vector drawables in a widget ImageView are unreliable across launchers, so the logo is
+     a plain PNG.
 
-  Colours are literal rather than theme tokens — a widget is drawn by the launcher's process,
-  where the app's Compose theme does not exist.
+  Colours are literal rather than theme tokens — a widget is drawn by the launcher's
+  process, where the app's Compose theme does not exist.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
@@ -18,11 +21,12 @@
     android:layout_height="match_parent"
     android:background="@drawable/widget_background">
 
-    <View
+    <ImageView
         android:layout_width="1dp"
         android:layout_height="match_parent"
         android:layout_marginStart="16dp"
-        android:background="@drawable/widget_margin_line" />
+        android:background="#59C67139"
+        android:contentDescription="@null" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -47,7 +51,7 @@
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:layout_marginEnd="8dp"
-                android:src="@drawable/ic_launcher_foreground"
+                android:src="@drawable/ic_widget_logo"
                 android:contentDescription="Open MindQuest" />
 
             <TextView
