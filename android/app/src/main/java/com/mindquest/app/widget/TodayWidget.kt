@@ -86,7 +86,9 @@ class TodayWidget : AppWidgetProvider() {
     ) {
         val ids = manager.getAppWidgetIds(ComponentName(context, TodayWidget::class.java))
         if (ids.isEmpty()) return
-        val agenda = MindQuestRepository(context.applicationContext).todayAgenda(MAX_ROWS)
+        // Fetch more than fit on the page: when a line is struck off, the one below it can
+        // roll up into view, the way the next line arrives as the carriage advances.
+        val agenda = MindQuestRepository(context.applicationContext).todayAgenda(FETCH_ROWS)
         val views = render(context, agenda, struckId, awardedXp)
         ids.forEach { manager.updateAppWidget(it, views) }
     }
@@ -100,11 +102,11 @@ class TodayWidget : AppWidgetProvider() {
         val views = RemoteViews(context.packageName, R.layout.widget_today)
 
         views.setTextViewText(
-            R.id.widget_title,
+            R.id.widget_subtitle,
             when {
-                awardedXp > 0 -> "+$awardedXp XP"
-                agenda.isEmpty() -> "NOTHING DUE TODAY"
-                else -> "DUE TODAY (${agenda.size})"
+                awardedXp > 0 -> "+$awardedXp XP EARNED"
+                agenda.isEmpty() -> "${dateFmt.format(Date())} · ALL CLEAR"
+                else -> "${dateFmt.format(Date())} · ${agenda.size} DUE"
             },
         )
         views.setViewVisibility(R.id.widget_empty, if (agenda.isEmpty()) View.VISIBLE else View.GONE)
@@ -121,7 +123,9 @@ class TodayWidget : AppWidgetProvider() {
             val box = if (struck) "[x]" else "[ ]"
             val time = timeFmt.format(Date(item.dueAt))
             val marker = if (item.overdue && !struck) "!" else " "
-            val line = "$box $marker$time  ${item.icon} ${item.title.take(48)}"
+            // No emoji: a fixed-width face keeps the boxes and times in columns, and colour
+            // glyphs would be the one thing on the page that never came off a typewriter.
+            val line = "$box $marker$time  ${item.title.take(44)}"
 
             if (struck) {
                 // A real strikethrough span, so it reads as a line drawn across the words
@@ -148,22 +152,24 @@ class TodayWidget : AppWidgetProvider() {
             )
         }
 
-        // The header opens the app; the rows are reserved for ticking things off.
+        // The masthead opens the app; the rows are reserved for ticking things off, so the
+        // two gestures never compete for the same pixels.
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
             launch.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            views.setOnClickPendingIntent(
-                R.id.widget_title,
-                PendingIntent.getActivity(
-                    context, 0, launch,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                ),
+            val open = PendingIntent.getActivity(
+                context, 0, launch,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+            views.setOnClickPendingIntent(R.id.widget_header, open)
+            views.setOnClickPendingIntent(R.id.widget_logo, open)
+            views.setOnClickPendingIntent(R.id.widget_title, open)
         }
         return views
     }
 
     companion object {
-        private const val MAX_ROWS = 5
+        /** Lines that fit on the page; ROW_IDS is the real limit on what is drawn. */
+        private const val FETCH_ROWS = 12
         private const val STRIKE_LINGER_MS = 700L
         private const val XP_LINGER_MS = 1200L
         private const val ACTION_TICK = "com.mindquest.app.widget.TICK"
@@ -175,6 +181,7 @@ class TodayWidget : AppWidgetProvider() {
             R.id.widget_row_4, R.id.widget_row_5,
         )
         private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        private val dateFmt = SimpleDateFormat("d MMM", Locale.getDefault())
 
         /**
          * Redraw every placed widget. Safe to call from anywhere that changes a note or
