@@ -71,8 +71,15 @@ data class PersonalBests(
 
 data class SearchHit(val title: String, val snippet: String, val location: String?, val score: Float)
 
-/** One line on the home-screen widget. */
-data class AgendaItem(val title: String, val dueAt: Long, val overdue: Boolean, val icon: String)
+/** One line on the home-screen widget. Carries its id so the row can be ticked off there. */
+data class AgendaItem(
+    val id: String,
+    val title: String,
+    val dueAt: Long,
+    val overdue: Boolean,
+    val icon: String,
+    val isQuest: Boolean,
+)
 
 /** Where a global-search hit lives, so the result can say which screen to open. */
 enum class GlobalKind(val label: String, val icon: String) {
@@ -1003,14 +1010,28 @@ class MindQuestRepository(private val context: Context) {
 
         val fromNotes = noteDao.allNotes()
             .filter { !it.done && it.remindAt != null && it.remindAt <= endOfToday }
-            .map { AgendaItem(it.text, it.remindAt!!, it.remindAt < now, Categories.of(it.category).icon) }
+            .map {
+                AgendaItem(
+                    it.id, it.text, it.remindAt!!, it.remindAt < now,
+                    Categories.of(it.category).icon, isQuest = false,
+                )
+            }
 
         val fromQuests = questDao.allQuests()
             .filter { it.status == "active" && it.dueAt != null && it.dueAt <= endOfToday }
-            .map { AgendaItem(it.title, it.dueAt!!, it.dueAt < now, "⚔️") }
+            .map { AgendaItem(it.id, it.title, it.dueAt!!, it.dueAt < now, "⚔️", isQuest = true) }
 
         (fromNotes + fromQuests).sortedBy { it.dueAt }.take(limit)
     }
+
+    /**
+     * Tick an agenda row off from the home screen. Completing a quest here is the real
+     * thing — the same XP, level-ups and achievements as completing it inside the app —
+     * because a tick that quietly counted for less would make the widget a lie.
+     * Returns XP awarded, or 0 for a plain note.
+     */
+    suspend fun completeAgendaItem(id: String, isQuest: Boolean): Int =
+        if (isQuest) completeQuest(id).xpAwarded else { setNoteDone(id, true); 0 }
 
     // ---------- global search ----------
 

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
+  A typed checklist. Monospace throughout so the columns line up the way they would on a
+  page fed through a typewriter, with "[ ]" boxes you strike off by tapping.
+
   Colours are literal rather than theme tokens: a widget is drawn by the launcher's process,
   where the app's Compose theme does not exist. These match the marginalia-console palette
   by hand (paper ground, ink text, terracotta accent).
@@ -16,43 +19,68 @@
         android:id="@+id/widget_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.12"
         android:textColor="#C67139"
-        android:textSize="14sp"
+        android:textSize="13sp"
         android:textStyle="bold"
-        android:text="Due today" />
+        android:text="DUE TODAY" />
+
+    <!-- The rule under the header: the line a typist would run across the page. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="5dp"
+        android:background="#D6C7AC" />
 
     <TextView
         android:id="@+id/widget_empty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="6dp"
+        android:paddingTop="8dp"
+        android:fontFamily="monospace"
         android:textColor="#6E6255"
         android:textSize="12sp"
         android:visibility="gone"
-        android:text="The road is clear." />
+        android:text="-- the road is clear --" />
 
     <TextView android:id="@+id/widget_row_1"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="6dp" android:maxLines="1" android:ellipsize="end"
+        android:paddingTop="7dp" android:paddingBottom="1dp"
+        android:maxLines="1" android:ellipsize="end"
+        android:fontFamily="monospace"
+        android:background="?android:attr/selectableItemBackground"
         android:textColor="#2B2826" android:textSize="12sp" />
 
     <TextView android:id="@+id/widget_row_2"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:paddingTop="5dp" android:paddingBottom="1dp"
+        android:maxLines="1" android:ellipsize="end"
+        android:fontFamily="monospace"
+        android:background="?android:attr/selectableItemBackground"
         android:textColor="#2B2826" android:textSize="12sp" />
 
     <TextView android:id="@+id/widget_row_3"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:paddingTop="5dp" android:paddingBottom="1dp"
+        android:maxLines="1" android:ellipsize="end"
+        android:fontFamily="monospace"
+        android:background="?android:attr/selectableItemBackground"
         android:textColor="#2B2826" android:textSize="12sp" />
 
     <TextView android:id="@+id/widget_row_4"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:paddingTop="5dp" android:paddingBottom="1dp"
+        android:maxLines="1" android:ellipsize="end"
+        android:fontFamily="monospace"
+        android:background="?android:attr/selectableItemBackground"
         android:textColor="#2B2826" android:textSize="12sp" />
 
     <TextView android:id="@+id/widget_row_5"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="4dp" android:maxLines="1" android:ellipsize="end"
+        android:paddingTop="5dp" android:paddingBottom="1dp"
+        android:maxLines="1" android:ellipsize="end"
+        android:fontFamily="monospace"
+        android:background="?android:attr/selectableItemBackground"
         android:textColor="#2B2826" android:textSize="12sp" />
 </LinearLayout>
