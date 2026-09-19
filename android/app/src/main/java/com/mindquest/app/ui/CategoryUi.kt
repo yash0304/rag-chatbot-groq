@@ -42,6 +42,46 @@ fun CategoryChip(categoryId: String?, onPick: (String) -> Unit) {
 }
 
 /**
+ * The Inbox folders: one per category that actually holds something, with its open count.
+ *
+ * Selecting a folder narrows the list to it; selecting it again goes back to everything.
+ * Folders are derived from the categories already on the notes rather than being created
+ * and managed separately — there is nothing to file into, and nothing to leave empty.
+ */
+@Composable
+fun FolderRow(
+    counts: Map<String, Int>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    if (counts.isEmpty()) return
+    val total = counts.values.sum()
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        FilterChip(
+            selected = selected == null,
+            onClick = { onSelect(null) },
+            label = { Text("🗃 All ($total)", style = MaterialTheme.typography.labelSmall) },
+        )
+        Categories.all.filter { counts.containsKey(it.id) }.forEach { category ->
+            val n = counts.getValue(category.id)
+            FilterChip(
+                selected = selected == category.id,
+                onClick = { onSelect(if (selected == category.id) null else category.id) },
+                label = {
+                    Text(
+                        "${category.icon} ${category.label} ($n)",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+            )
+        }
+    }
+}
+
+/**
  * Horizontal filter row. Only categories actually present are offered — an empty filter
  * that returns nothing is worse than no filter at all.
  */

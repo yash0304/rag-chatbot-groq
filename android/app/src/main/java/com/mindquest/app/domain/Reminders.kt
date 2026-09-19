@@ -14,13 +14,17 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.mindquest.app.data.MindQuestDatabase
 import com.mindquest.app.data.SettingsStore
 import com.mindquest.app.widget.TodayWidget
+import java.time.LocalDate
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,6 +42,8 @@ object Reminders {
     const val KEY_NOTE_ID = "note_id"
     const val KEY_ATTEMPT = "attempt"
     private const val TAG_PREFIX = "note-reminder-"
+    private const val HABIT_TAG_PREFIX = "habit-reminder-"
+    const val KEY_HABIT_ID = "habit_id"
 
     /** Gap between repeats, and how many times to nag before giving up. */
     private const val REPEAT_MINUTES = 15L
@@ -88,6 +94,52 @@ object Reminders {
     fun cancel(context: Context, noteId: String) {
         WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(TAG_PREFIX + noteId)
     }
+
+    // ---------- daily missions ----------
+
+    /**
+     * Nudge a daily mission at the same time every day, e.g. 21:00 for "walk 5000 steps".
+     *
+     * A periodic request rather than a chain of one-shots, so the schedule survives the app
+     * being killed and the phone rebooting without anything having to re-arm it. The initial
+     * delay lands on the next occurrence of that time; after that WorkManager repeats daily.
+     */
+    fun scheduleDailyHabit(context: Context, habitId: String, title: String, minuteOfDay: Int) {
+        ensureChannel(context)
+        val request = PeriodicWorkRequestBuilder<HabitReminderWorker>(1, TimeUnit.DAYS)
+            .setInitialDelay(millisUntilNext(minuteOfDay), TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(KEY_HABIT_ID to habitId, KEY_TEXT to title))
+            .addTag(HABIT_TAG_PREFIX + habitId)
+            .build()
+        // REPLACE so changing the time re-aims the existing schedule instead of stacking a
+        // second one on top of it.
+        WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
+            HABIT_TAG_PREFIX + habitId,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            request,
+        )
+    }
+
+    fun cancelDailyHabit(context: Context, habitId: String) {
+        WorkManager.getInstance(context.applicationContext)
+            .cancelUniqueWork(HABIT_TAG_PREFIX + habitId)
+    }
+
+    /** Milliseconds from now until the next time the clock reads [minuteOfDay]. */
+    private fun millisUntilNext(minuteOfDay: Int): Long {
+        val now = Calendar.getInstance()
+        val target = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+            set(Calendar.MINUTE, minuteOfDay % 60)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        if (!target.after(now)) target.add(Calendar.DAY_OF_YEAR, 1)
+        return target.timeInMillis - now.timeInMillis
+    }
+
+    fun formatTimeOfDay(minuteOfDay: Int): String =
+        "%02d:%02d".format(minuteOfDay / 60, minuteOfDay % 60)
 
     /** Send the reminder as a text to the user's own number. No internet involved. */
     fun sendSms(context: Context, number: String, body: String) {
@@ -186,5 +238,55 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
         } catch (e: SecurityException) {
             // permission revoked between scheduling and firing
         }
+    }
+}
+
+
+/**
+ * The daily nudge for a mission such as "walk 5000 steps".
+ *
+ * It checks the streak first and stays silent if the mission is already done today — the
+ * point is to catch the days you would otherwise miss, not to announce itself regardless.
+ * When it does fire it uses the same repeat-until-done chain as note reminders.
+ */
+class HabitReminderWorker(appContext: Context, params: WorkerParameters) :
+    CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        val habitId = inputData.getString(Reminders.KEY_HABIT_ID).orEmpty()
+        if (habitId.isEmpty()) return Result.success()
+
+        val habit = runCatching {
+            MindQuestDatabase.get(applicationContext).habitDao().get(habitId)
+        }.getOrNull() ?: return Result.success() // deleted; the periodic work will be cancelled too
+
+        val today = LocalDate.now().toString()
+        if (habit.lastCheckinDate == today) return Result.success() // already done
+
+        if (Reminders.hasPermission(applicationContext)) {
+            Reminders.ensureChannel(applicationContext)
+            val streakNote = if (habit.streak > 0) " · ${habit.streak}-day streak on the line" else ""
+            val notification = NotificationCompat.Builder(applicationContext, Reminders.CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_popup_reminder)
+                .setContentTitle("Daily mission")
+                .setContentText(habit.title + streakNote)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(habit.title + streakNote))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .build()
+            try {
+                NotificationManagerCompat.from(applicationContext)
+                    .notify(habitId.hashCode(), notification)
+            } catch (e: SecurityException) {
+                // permission revoked since scheduling
+            }
+        }
+
+        val settings = SettingsStore(applicationContext)
+        val number = settings.reminderPhone()
+        if (settings.smsRemindersEnabled() && number != null && Reminders.hasSmsPermission(applicationContext)) {
+            Reminders.sendSms(applicationContext, number, "MindQuest: ${habit.title}")
+        }
+        return Result.success()
     }
 }

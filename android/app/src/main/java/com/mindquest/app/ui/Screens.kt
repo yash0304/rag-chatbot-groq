@@ -13,7 +13,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.ProfileEntity
+import android.Manifest
+import android.app.TimePickerDialog
+import android.content.Context
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import com.mindquest.app.domain.Catalogs
+import com.mindquest.app.domain.Reminders
+import java.util.Calendar
 import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.GameEngine
 import kotlinx.coroutines.launch
@@ -233,6 +242,17 @@ private val CADENCES = listOf("daily", "weekdays", "weekly")
 
 @Composable
 fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
+    val context = LocalContext.current
+    val notifPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (!granted) notify("Without notification permission the daily nudge stays silent.") }
+
+    fun ensureNotifPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Reminders.hasPermission(context)) {
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     val scope = rememberCoroutineScope()
     val habits by repo.observeHabits().collectAsState(emptyList())
     var title by remember { mutableStateOf("") }
@@ -268,6 +288,31 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     TextButton(onClick = { scope.launch { repo.deleteHabit(h.id) } }) { Text("remove", color = Muted) }
                 }
                 Text("🔥 streak ${h.streak} · 🏔️ best ${h.bestStreak} · ${h.cadence}", style = MaterialTheme.typography.bodySmall, color = Muted)
+
+                // The daily nudge. It stays quiet on days the mission is already done, so
+                // it only ever speaks up about the days that would otherwise slip.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        ensureNotifPermission()
+                        pickTimeOfDay(context, h.remindMinuteOfDay) { minute ->
+                            scope.launch {
+                                repo.setHabitReminder(h.id, minute)
+                                notify("Nudging you daily at ${Reminders.formatTimeOfDay(minute)}.")
+                            }
+                        }
+                    }) {
+                        Text(
+                            h.remindMinuteOfDay?.let { "⏰ ${Reminders.formatTimeOfDay(it)} daily" }
+                                ?: "⏰ Remind daily",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    if (h.remindMinuteOfDay != null) {
+                        TextButton(onClick = {
+                            scope.launch { repo.setHabitReminder(h.id, null); notify("Daily nudge off.") }
+                        }) { Text("off", style = MaterialTheme.typography.labelSmall, color = Muted) }
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 if (doneToday) {
                     Text("✓ Completed today", color = Verdant)
@@ -286,4 +331,20 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             } }
         }
     }
+}
+
+
+/**
+ * Pick a time of day for a daily nudge, returning minutes past midnight. Uses the framework
+ * dialog rather than the Compose time picker, which is still experimental.
+ */
+private fun pickTimeOfDay(context: Context, currentMinuteOfDay: Int?, onPicked: (Int) -> Unit) {
+    val now = Calendar.getInstance()
+    val hour = currentMinuteOfDay?.div(60) ?: now.get(Calendar.HOUR_OF_DAY)
+    val minute = currentMinuteOfDay?.rem(60) ?: 0
+    TimePickerDialog(
+        context,
+        { _, h, m -> onPicked(h * 60 + m) },
+        hour, minute, false,
+    ).show()
 }

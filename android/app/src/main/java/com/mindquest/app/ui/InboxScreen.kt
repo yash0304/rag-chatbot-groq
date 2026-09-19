@@ -38,7 +38,10 @@ private val timeFmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
 fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val notes by repo.observeNotes().collectAsState(emptyList())
+    val allNotes by repo.observeNotes().collectAsState(emptyList())
+    val folders by repo.observeNoteFolders().collectAsState(emptyMap())
+    var folder by remember { mutableStateOf<String?>(null) }
+    val notes = allNotes.filter { folder == null || it.category == folder }
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     var pendingRemind by remember { mutableStateOf<Long?>(null) }
@@ -47,8 +50,10 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     var pendingCategory by remember { mutableStateOf("general") }
     var categoryChosen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(input, categoryChosen) {
-        if (!categoryChosen) pendingCategory = Categories.classify(input)
+    LaunchedEffect(input, categoryChosen, folder) {
+        // Typing inside a folder files it there: opening Shopping and adding a line plainly
+        // means "this is shopping", whatever the words happen to look like.
+        if (!categoryChosen) pendingCategory = folder ?: Categories.classify(input)
     }
 
     val notifPermission = rememberLauncherForActivityResult(
@@ -68,10 +73,13 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Inbox", style = MaterialTheme.typography.headlineMedium, color = Parchment)
         Text(
-            "Jot an errand or checklist item. Add a reminder, or turn it into a quest.",
+            if (folder == null) "Jot an errand or checklist item. Add a reminder, or turn it into a quest."
+            else "Showing ${Categories.of(folder).label}. Reminders stay exactly as you set them.",
             style = MaterialTheme.typography.bodySmall, color = Muted,
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
+        FolderRow(counts = folders, selected = folder, onSelect = { folder = it })
+        Spacer(Modifier.height(6.dp))
 
         LazyColumn(
             state = listState,
@@ -81,7 +89,8 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             if (notes.isEmpty()) {
                 item {
                     Text(
-                        "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…",
+                        if (folder == null) "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…"
+                        else "Nothing in ${Categories.of(folder).label} yet.",
                         color = Muted, style = MaterialTheme.typography.bodyMedium,
                     )
                 }

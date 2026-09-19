@@ -65,6 +65,9 @@ fun MindQuestApp() {
         // Give a category to anything captured before categories existed. Cheap keyword
         // work, and it never overwrites a category the user has already set.
         repo.backfillCategories()
+        // WorkManager keeps periodic work across reboots itself; this repairs the case where
+        // its records were cleared, and is a no-op when everything is already scheduled.
+        repo.rearmHabitReminders()
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked
