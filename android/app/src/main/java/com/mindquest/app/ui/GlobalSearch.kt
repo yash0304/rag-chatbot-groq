@@ -46,14 +46,17 @@ fun GlobalSearchSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Search everything") },
-                placeholder = { Text("a note, a document, a quest…") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search everything") },
+                    placeholder = { Text("a note, a document, a quest…") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                MicButton { query = it }
+            }
             Spacer(Modifier.height(12.dp))
 
             when {

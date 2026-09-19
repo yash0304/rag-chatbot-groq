@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The mic key on the typewriter: one big target, nothing to read. Colours are literal
+  because a widget is drawn by the launcher's process, where the Compose theme is absent.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/capture_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@drawable/widget_capture_bg"
+    android:padding="8dp">
+
+    <TextView
+        android:id="@+id/capture_mic"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🎙"
+        android:textSize="26sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingTop="2dp"
+        android:fontFamily="serif-monospace"
+        android:letterSpacing="0.12"
+        android:text="SPEAK"
+        android:textColor="#F1E2C9"
+        android:textSize="10sp" />
+</LinearLayout>

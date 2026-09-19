@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.FolderEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
 import com.mindquest.app.domain.Categories
@@ -39,9 +40,23 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allNotes by repo.observeNotes().collectAsState(emptyList())
-    val folders by repo.observeNoteFolders().collectAsState(emptyMap())
+    val categoryCounts by repo.observeNoteFolders().collectAsState(emptyMap())
+    val customFolders by repo.observeFolders().collectAsState(emptyList())
+    val customCounts by repo.observeFolderCounts().collectAsState(emptyMap())
+    // A selection is either a user-made folder or a category; the two never mix, so one
+    // nullable id each is clearer than a sealed type for two cases.
     var folder by remember { mutableStateOf<String?>(null) }
-    val notes = allNotes.filter { folder == null || it.category == folder }
+    var customFolder by remember { mutableStateOf<String?>(null) }
+    var newFolderOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<FolderEntity?>(null) }
+    val openFolder = customFolders.firstOrNull { it.id == customFolder }
+    val notes = allNotes.filter {
+        when {
+            customFolder != null -> it.folderId == customFolder
+            folder != null -> it.category == folder && it.folderId == null
+            else -> true
+        }
+    }
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     var pendingRemind by remember { mutableStateOf<Long?>(null) }
@@ -66,6 +81,51 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         }
     }
 
+    // Speaking a line goes through the same capture path as the widget, so dictation picks
+    // up the date in the sentence: "buy sugar by 21st September" arrives with its reminder.
+    // Saying back what was heard matters more here than on the keyboard — a misheard word is
+    // invisible until you read it.
+    fun capture(spoken: String) {
+        ensureNotifPermission()
+        scope.launch {
+            val r = repo.captureNote(spoken, folderId = customFolder, category = folder)
+            notify(
+                buildString {
+                    append(r.text)
+                    r.dueAt?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
+                    if (r.folderId == null) append(" · ${Categories.of(r.category).label}")
+                },
+            )
+        }
+    }
+
+    if (newFolderOpen) {
+        NewFolderDialog(
+            onDismiss = { newFolderOpen = false },
+            onCreate = { name ->
+                newFolderOpen = false
+                scope.launch {
+                    val id = repo.createFolder(name)
+                    customFolder = id; folder = null
+                    notify("Folder “$name” created — everything you add now goes inside it.")
+                }
+            },
+        )
+    }
+
+    renaming?.let { target ->
+        NewFolderDialog(
+            initial = target.name,
+            title = "Rename folder",
+            confirm = "Rename",
+            onDismiss = { renaming = null },
+            onCreate = { name ->
+                renaming = null
+                scope.launch { repo.renameFolder(target.id, name) }
+            },
+        )
+    }
+
     LaunchedEffect(notes.size) {
         if (notes.isNotEmpty()) listState.animateScrollToItem(notes.lastIndex)
     }
@@ -73,12 +133,38 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Inbox", style = MaterialTheme.typography.headlineMedium, color = Parchment)
         Text(
-            if (folder == null) "Jot an errand or checklist item. Add a reminder, or turn it into a quest."
-            else "Showing ${Categories.of(folder).label}. Reminders stay exactly as you set them.",
+            when {
+                openFolder != null ->
+                    "${openFolder.name} — anything you add or say now lands in this folder."
+                folder != null ->
+                    "Showing ${Categories.of(folder).label}. Reminders stay exactly as you set them."
+                else ->
+                    "Jot an errand or checklist item. Add a reminder, or turn it into a quest."
+            },
             style = MaterialTheme.typography.bodySmall, color = Muted,
         )
         Spacer(Modifier.height(6.dp))
-        FolderRow(counts = folders, selected = folder, onSelect = { folder = it })
+        CustomFolderRow(
+            folders = customFolders,
+            counts = customCounts,
+            selected = customFolder,
+            onSelect = { customFolder = it; if (it != null) folder = null },
+            onCreate = { newFolderOpen = true },
+            onRename = { renaming = it },
+            onDelete = { target ->
+                customFolder = null
+                scope.launch {
+                    repo.deleteFolder(target.id)
+                    notify("Folder “${target.name}” removed. Its lines are still in the Inbox.")
+                }
+            },
+        )
+        Spacer(Modifier.height(4.dp))
+        FolderRow(
+            counts = categoryCounts,
+            selected = folder,
+            onSelect = { folder = it; if (it != null) customFolder = null },
+        )
         Spacer(Modifier.height(6.dp))
 
         LazyColumn(
@@ -89,8 +175,12 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             if (notes.isEmpty()) {
                 item {
                     Text(
-                        if (folder == null) "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…"
-                        else "Nothing in ${Categories.of(folder).label} yet.",
+                        when {
+                            openFolder != null ->
+                                "“${openFolder.name}” is empty. Add the first item below, by thumb or by mic."
+                            folder != null -> "Nothing in ${Categories.of(folder).label} yet."
+                            else -> "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…"
+                        },
                         color = Muted, style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -151,11 +241,13 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
-                placeholder = { Text("Capture a thought…") },
+                placeholder = {
+                    Text(openFolder?.let { "Add to ${it.name}…" } ?: "Capture a thought…")
+                },
                 modifier = Modifier.weight(1f),
                 maxLines = 3,
             )
-            Spacer(Modifier.width(4.dp))
+            MicButton { spoken -> capture(spoken) }
             TextButton(onClick = {
                 if (pendingRemind != null) {
                     pendingRemind = null
@@ -172,7 +264,10 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     val cat = pendingCategory
                     val chosen = categoryChosen
                     input = ""; pendingRemind = null; categoryChosen = false
-                    scope.launch { repo.addNote(t, at, cat, chosen) }
+                    scope.launch {
+                        val id = repo.addNote(t, at, cat, chosen)
+                        customFolder?.let { repo.setNoteFolder(id, it) }
+                    }
                 },
             ) { Text("Add") }
         }

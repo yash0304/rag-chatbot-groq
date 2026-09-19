@@ -162,7 +162,12 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         }
         item {
             Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(title, { title = it }, label = { Text("New quest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(title, { title = it }, label = { Text("New quest") }, singleLine = true, modifier = Modifier.weight(1f))
+                    // Dictation fills the field rather than submitting: a quest still needs its
+                    // difficulty chosen, so the spoken words wait here for that one tap.
+                    MicButton { title = it }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     DIFFICULTIES.forEach { d ->
                         FilterChip(
@@ -262,7 +267,10 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         item { Text("Daily Missions", style = MaterialTheme.typography.headlineMedium, color = Parchment) }
         item {
             Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(title, { title = it }, label = { Text("New mission") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(title, { title = it }, label = { Text("New mission") }, singleLine = true, modifier = Modifier.weight(1f))
+                    MicButton { title = it }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     CADENCES.forEach { c ->
                         FilterChip(selected = cadence == c, onClick = { cadence = c }, label = { Text(c) })

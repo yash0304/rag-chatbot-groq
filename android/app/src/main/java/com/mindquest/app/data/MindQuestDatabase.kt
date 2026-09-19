@@ -24,8 +24,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatMessageEntity::class,
         WeeklyReviewEntity::class,
         NoteEntity::class,
+        FolderEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -39,6 +40,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun reviewDao(): ReviewDao
     abstract fun noteDao(): NoteDao
+    abstract fun folderDao(): FolderDao
 
     companion object {
         @Volatile
@@ -92,6 +94,18 @@ abstract class MindQuestDatabase : RoomDatabase() {
             }
         }
 
+        /** v8→v9: user-made folders, and the note's link to one. Additive. */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `folders` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`icon` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_folders_createdAt` ON `folders` (`createdAt`)")
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `folderId` TEXT")
+            }
+        }
+
         /** v7→v8: daily missions gain a time of day to nudge at. Additive. */
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -134,7 +148,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
                 )
                     // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                     // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { instance = it }

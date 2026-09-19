@@ -33,12 +33,22 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         item { Text("Story Arcs", style = MaterialTheme.typography.headlineMedium, color = Parchment) }
         item {
             Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(title, { title = it }, label = { Text("Goal") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    lines, { lines = it },
-                    label = { Text("Milestones (one per line)") },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(title, { title = it }, label = { Text("Goal") }, singleLine = true, modifier = Modifier.weight(1f))
+                    MicButton { title = it }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        lines, { lines = it },
+                        label = { Text("Milestones (one per line)") },
+                        modifier = Modifier.weight(1f).heightIn(min = 80.dp),
+                    )
+                    // Each dictation adds a milestone rather than replacing the lot, so an arc
+                    // can be spoken one step at a time without touching the keyboard.
+                    MicButton { spoken ->
+                        lines = if (lines.isBlank()) spoken else "$lines\n$spoken"
+                    }
+                }
                 Button(
                     onClick = {
                         if (title.isNotBlank()) {

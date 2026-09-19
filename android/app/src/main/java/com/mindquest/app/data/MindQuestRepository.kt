@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.room.withTransaction
 import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.Categories
+import com.mindquest.app.domain.DateParse
 import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.Ingestion
@@ -71,6 +72,15 @@ data class PersonalBests(
 )
 
 data class SearchHit(val title: String, val snippet: String, val location: String?, val score: Float)
+
+/** What one captured sentence turned into, so the caller can say so out loud. */
+data class CaptureResult(
+    val id: String,
+    val text: String,
+    val dueAt: Long?,
+    val category: String,
+    val folderId: String?,
+)
 
 /** One line on the home-screen widget. Carries its id so the row can be ticked off there. */
 data class AgendaItem(
@@ -153,6 +163,7 @@ class MindQuestRepository(private val context: Context) {
     private val chatDao = db.chatDao()
     private val reviewDao = db.reviewDao()
     private val noteDao = db.noteDao()
+    private val folderDao = db.folderDao()
     private val json = Json { ignoreUnknownKeys = true }
 
     // Resolved on first use: the MiniLM model if its assets shipped, else hashing vectors.
@@ -1026,6 +1037,69 @@ class MindQuestRepository(private val context: Context) {
             }
         }
         changed
+    }
+
+    // ---------- user-made folders ----------
+
+    fun observeFolders(): Flow<List<FolderEntity>> = folderDao.observeAll()
+
+    /**
+     * The icon is guessed from the name rather than asked for: "Tuesday vegetable market"
+     * should arrive already looking like what it is, and one more decision at the moment of
+     * making a list is one reason not to make it.
+     */
+    suspend fun createFolder(name: String, icon: String? = null): String {
+        val id = UUID.randomUUID().toString()
+        val glyph = icon ?: Categories.of(Categories.classify(name)).icon
+        folderDao.upsert(FolderEntity(id = id, name = name.trim(), icon = glyph))
+        return id
+    }
+
+    suspend fun renameFolder(id: String, name: String) {
+        val folder = folderDao.all().firstOrNull { it.id == id } ?: return
+        folderDao.upsert(folder.copy(name = name.trim()))
+    }
+
+    /** Deleting a folder releases its notes rather than destroying them. */
+    suspend fun deleteFolder(id: String) {
+        folderDao.detachNotes(id)
+        folderDao.delete(id)
+    }
+
+    suspend fun setNoteFolder(noteId: String, folderId: String?) {
+        val note = noteDao.get(noteId) ?: return
+        noteDao.upsert(note.copy(folderId = folderId))
+    }
+
+    /** Open note counts per user folder. */
+    fun observeFolderCounts(): Flow<Map<String, Int>> =
+        noteDao.observeNotes().map { notes ->
+            notes.filter { !it.done && it.folderId != null }
+                .groupingBy { it.folderId!! }
+                .eachCount()
+        }
+
+    /**
+     * The one capture path: take a sentence as spoken or typed, pull the date out of it, and
+     * file it. Used by the Inbox composer, the mic on every screen, and the home-screen
+     * capture widget, so a note made by voice is identical to one made by thumb.
+     */
+    suspend fun captureNote(
+        spoken: String,
+        folderId: String? = null,
+        category: String? = null,
+    ): CaptureResult {
+        val parsed = DateParse.parse(spoken)
+        val text = parsed.text.ifBlank { spoken.trim() }
+        val chosen = category ?: Categories.classify(text)
+        val id = addNote(
+            text = text,
+            remindAt = parsed.dueAt,
+            category = chosen,
+            categoryChosen = category != null || folderId != null,
+        )
+        if (folderId != null) setNoteFolder(id, folderId)
+        return CaptureResult(id, text, parsed.dueAt, chosen, folderId)
     }
 
     /** Open note counts per category, for the Inbox folders. */

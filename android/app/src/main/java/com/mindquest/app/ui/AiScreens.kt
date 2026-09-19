@@ -87,6 +87,7 @@ fun NarratorScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(input, { input = it }, placeholder = { Text("Ask about your knowledge…") }, modifier = Modifier.weight(1f), enabled = !busy, maxLines = 3)
+            MicButton { input = it }
             Spacer(Modifier.width(8.dp))
             Button(
                 enabled = !busy && input.isNotBlank(),

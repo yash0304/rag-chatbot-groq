@@ -202,6 +202,24 @@ interface ChatDao {
 }
 
 @Dao
+interface FolderDao {
+    @Upsert
+    suspend fun upsert(folder: FolderEntity)
+
+    @Query("DELETE FROM folders WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM folders ORDER BY createdAt")
+    fun observeAll(): Flow<List<FolderEntity>>
+
+    @Query("SELECT * FROM folders ORDER BY createdAt")
+    suspend fun all(): List<FolderEntity>
+
+    @Query("UPDATE notes SET folderId = NULL WHERE folderId = :id")
+    suspend fun detachNotes(id: String)
+}
+
+@Dao
 interface NoteDao {
     @Upsert
     suspend fun upsert(note: NoteEntity)

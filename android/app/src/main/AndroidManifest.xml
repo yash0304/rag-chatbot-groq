@@ -24,6 +24,27 @@
             </intent-filter>
         </activity>
 
+        <!-- Transparent: the speech recogniser's own dialog is the entire interface. -->
+        <activity
+            android:name=".widget.VoiceCaptureActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <receiver
+            android:name=".widget.CaptureWidget"
+            android:label="MindQuest · Speak"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_capture_info" />
+        </receiver>
+
         <receiver
             android:name=".widget.TodayWidget"
             android:exported="false">

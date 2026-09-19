@@ -179,6 +179,20 @@ data class ChatMessageEntity(
 )
 
 /**
+ * A folder the user made themselves, e.g. "Tuesday vegetable market". Distinct from the
+ * built-in life categories: those are guessed and describe what a note is about, whereas a
+ * folder is declared and describes where the user has decided it belongs.
+ */
+@Entity(tableName = "folders", indices = [Index("createdAt")])
+@Serializable
+data class FolderEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val icon: String = "🗂",
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
  * Quick-capture inbox note: a line of text, optionally with a reminder time.
  * Can graduate into a Quest (questId) or into the Archives (docId).
  */
@@ -194,6 +208,8 @@ data class NoteEntity(
     val category: String? = null, // Categories.classify() guess; user can override
     /** True once the user has picked a category by hand — auto-classification must not undo that. */
     @ColumnInfo(defaultValue = "0") val categoryLocked: Boolean = false,
+    /** A user-made folder, when the note has been filed into one. Sits over the category. */
+    val folderId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
