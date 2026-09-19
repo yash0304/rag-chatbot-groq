@@ -23,6 +23,7 @@ import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -296,7 +297,38 @@ class MindQuestRepository(private val context: Context) {
         habitDao.upsert(HabitEntity(id = UUID.randomUUID().toString(), title = title.trim(), cadence = cadence))
     }
 
-    suspend fun deleteHabit(id: String) = habitDao.delete(id)
+    suspend fun deleteHabit(id: String) {
+        Reminders.cancelDailyHabit(context, id) // no point nudging about a mission that's gone
+        habitDao.delete(id)
+        TodayWidget.refresh(context)
+    }
+
+    /**
+     * Set or clear the daily nudge for a mission, e.g. 21:00 for "walk 5000 steps".
+     * [minuteOfDay] is minutes past midnight; null turns the nudge off.
+     */
+    suspend fun setHabitReminder(id: String, minuteOfDay: Int?) {
+        val habit = habitDao.get(id) ?: return
+        habitDao.upsert(habit.copy(remindMinuteOfDay = minuteOfDay))
+        if (minuteOfDay == null) {
+            Reminders.cancelDailyHabit(context, id)
+        } else {
+            Reminders.scheduleDailyHabit(context, id, habit.title, minuteOfDay)
+        }
+    }
+
+    /**
+     * Re-arm every mission nudge. WorkManager keeps periodic work across reboots on its own,
+     * but this repairs the case where its records were cleared — app data wiped, a restore
+     * from backup — and costs nothing when everything is already scheduled.
+     */
+    suspend fun rearmHabitReminders() = withContext(Dispatchers.IO) {
+        habitDao.allHabits().forEach { habit ->
+            habit.remindMinuteOfDay?.let {
+                Reminders.scheduleDailyHabit(context, habit.id, habit.title, it)
+            }
+        }
+    }
 
     suspend fun checkin(id: String): CheckinResult = db.withTransaction {
         val habit = habitDao.get(id) ?: return@withTransaction CheckinResult()
@@ -995,6 +1027,14 @@ class MindQuestRepository(private val context: Context) {
         }
         changed
     }
+
+    /** Open note counts per category, for the Inbox folders. */
+    fun observeNoteFolders(): Flow<Map<String, Int>> =
+        noteDao.observeNotes().map { notes ->
+            notes.filter { !it.done }
+                .groupingBy { it.category ?: "general" }
+                .eachCount()
+        }
 
     // ---------- today's agenda (home-screen widget) ----------
 

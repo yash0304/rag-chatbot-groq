@@ -62,6 +62,8 @@ data class HabitEntity(
     val streak: Int = 0,
     val bestStreak: Int = 0,
     val lastCheckinDate: String? = null, // ISO yyyy-MM-dd
+    /** Minutes past midnight for the daily nudge (21:00 = 1260). Null = no reminder. */
+    val remindMinuteOfDay: Int? = null,
     val xpBase: Int = 15,
     val createdAt: Long = System.currentTimeMillis(),
 )
