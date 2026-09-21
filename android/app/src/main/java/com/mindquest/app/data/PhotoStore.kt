@@ -30,20 +30,28 @@ object PhotoStore {
     fun newFile(context: Context): File = File(dir(context), "${UUID.randomUUID()}.jpg")
 
     /** Copy a picked image into our own storage. Returns null if it couldn't be read. */
-    fun importFrom(context: Context, uri: Uri): File? = try {
-        val target = newFile(context)
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
-        } ?: return null
-        if (target.length() == 0L) {
-            target.delete()
+    fun importFrom(context: Context, uri: Uri): File? {
+        return try {
+            val target = newFile(context)
+            val stream = context.contentResolver.openInputStream(uri)
+            if (stream == null) {
+                target.delete()
+                return null
+            }
+            stream.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            // A zero-byte copy would render as a blank square forever; treat it as a failure.
+            if (target.length() == 0L) {
+                target.delete()
+                null
+            } else {
+                target
+            }
+        } catch (e: Exception) {
+            Log.w("PhotoStore", "Could not import photo", e)
             null
-        } else {
-            target
         }
-    } catch (e: Exception) {
-        Log.w("PhotoStore", "Could not import photo", e)
-        null
     }
 
     /**
