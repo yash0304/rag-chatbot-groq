@@ -117,6 +117,11 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     query, { query = it }, label = { Text("Search your archives") },
                     singleLine = true, modifier = Modifier.weight(1f),
                 )
+                // Speaking a search runs it straight away — there is nothing else to decide.
+                MicButton { spoken ->
+                    query = spoken
+                    scope.launch { results = repo.search(spoken) }
+                }
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = { scope.launch { results = repo.search(query) } }) { Text("Search") }
             }

@@ -50,6 +50,8 @@ data class QuestEntity(
     @ColumnInfo(defaultValue = "0") val categoryLocked: Boolean = false,
     val dueAt: Long? = null,
     val completedAt: Long? = null,
+    /** When the user last changed the wording or the terms. Null = never edited. */
+    val updatedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -58,13 +60,40 @@ data class QuestEntity(
 data class HabitEntity(
     @PrimaryKey val id: String,
     val title: String,
-    val cadence: String = "daily", // daily|weekdays|weekly
+    val cadence: String = "daily", // see Cadences.all — daily through yearly
     val streak: Int = 0,
     val bestStreak: Int = 0,
     val lastCheckinDate: String? = null, // ISO yyyy-MM-dd
-    /** Minutes past midnight for the daily nudge (21:00 = 1260). Null = no reminder. */
+    /** Minutes past midnight for the nudge (21:00 = 1260). Null = no reminder. */
     val remindMinuteOfDay: Int? = null,
+    /**
+     * What this mission is working towards — "80 kg" — and by when, as an ISO date.
+     * Together they turn a recurring nudge into a countdown: a monthly mission with a target
+     * of March 2027 can say how many months are left every time it comes round.
+     */
+    val targetNote: String? = null,
+    val targetDate: String? = null, // ISO yyyy-MM-dd
+    val updatedAt: Long? = null,
     val xpBase: Int = 15,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * A photo kept against a quest or a mission — the monthly weighing-scale reading, the
+ * receipt, the before-and-after.
+ *
+ * The file is copied into the app's own storage rather than referenced where it was picked
+ * from, so clearing your gallery can't empty the record. [ownerKind] keeps one table serving
+ * quests, missions and notes instead of three that would drift apart.
+ */
+@Entity(tableName = "attachments", indices = [Index(value = ["ownerKind", "ownerId"])])
+@Serializable
+data class AttachmentEntity(
+    @PrimaryKey val id: String,
+    val ownerKind: String, // quest|habit|note
+    val ownerId: String,
+    val path: String, // absolute path inside filesDir
+    val caption: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -179,6 +208,20 @@ data class ChatMessageEntity(
 )
 
 /**
+ * A folder the user made themselves, e.g. "Tuesday vegetable market". Distinct from the
+ * built-in life categories: those are guessed and describe what a note is about, whereas a
+ * folder is declared and describes where the user has decided it belongs.
+ */
+@Entity(tableName = "folders", indices = [Index("createdAt")])
+@Serializable
+data class FolderEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val icon: String = "🗂",
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
  * Quick-capture inbox note: a line of text, optionally with a reminder time.
  * Can graduate into a Quest (questId) or into the Archives (docId).
  */
@@ -194,6 +237,10 @@ data class NoteEntity(
     val category: String? = null, // Categories.classify() guess; user can override
     /** True once the user has picked a category by hand — auto-classification must not undo that. */
     @ColumnInfo(defaultValue = "0") val categoryLocked: Boolean = false,
+    /** A user-made folder, when the note has been filed into one. Sits over the category. */
+    val folderId: String? = null,
+    /** When the user last changed the wording or the reminder. Null = never edited. */
+    val updatedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

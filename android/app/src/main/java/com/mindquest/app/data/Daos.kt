@@ -202,6 +202,48 @@ interface ChatDao {
 }
 
 @Dao
+interface FolderDao {
+    @Upsert
+    suspend fun upsert(folder: FolderEntity)
+
+    @Query("DELETE FROM folders WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM folders ORDER BY createdAt")
+    fun observeAll(): Flow<List<FolderEntity>>
+
+    @Query("SELECT * FROM folders ORDER BY createdAt")
+    suspend fun all(): List<FolderEntity>
+
+    @Query("UPDATE notes SET folderId = NULL WHERE folderId = :id")
+    suspend fun detachNotes(id: String)
+}
+
+@Dao
+interface AttachmentDao {
+    @Upsert
+    suspend fun upsert(attachment: AttachmentEntity)
+
+    @Query("DELETE FROM attachments WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM attachments WHERE id = :id")
+    suspend fun get(id: String): AttachmentEntity?
+
+    @Query("SELECT * FROM attachments WHERE ownerKind = :kind ORDER BY createdAt")
+    fun observeOfKind(kind: String): Flow<List<AttachmentEntity>>
+
+    @Query("SELECT * FROM attachments WHERE ownerKind = :kind AND ownerId = :ownerId ORDER BY createdAt")
+    suspend fun of(kind: String, ownerId: String): List<AttachmentEntity>
+
+    @Query("DELETE FROM attachments WHERE ownerKind = :kind AND ownerId = :ownerId")
+    suspend fun deleteAllOf(kind: String, ownerId: String)
+
+    @Query("SELECT * FROM attachments")
+    suspend fun allAttachments(): List<AttachmentEntity>
+}
+
+@Dao
 interface NoteDao {
     @Upsert
     suspend fun upsert(note: NoteEntity)

@@ -23,16 +23,17 @@ object GameEngine {
     fun streakMultiplier(streak: Int): Double =
         minOf(1 + minOf(streak, 30) * 0.05, 2.5)
 
-    /** New streak value given the previous check-in date, per cadence gap tolerance. */
-    fun computeStreak(cadence: String, currentStreak: Int, lastDateEpochDay: Long?, todayEpochDay: Long): Int {
-        if (lastDateEpochDay == null) return 1
-        val gap = todayEpochDay - lastDateEpochDay
-        val maxGap = when (cadence) {
-            "weekly" -> 7L
-            "weekdays" -> 3L
-            else -> 1L
-        }
-        return if (gap in 1..maxGap) currentStreak + 1 else 1
+    /**
+     * New streak value, counted in whole cadence periods rather than days.
+     *
+     * A monthly mission done on the 1st of March and again on the 31st of April is a
+     * two-month streak even though sixty days went by, and a day-counting rule could never
+     * say so. [lastPeriod] and [thisPeriod] come from Cadences.periodIndex.
+     */
+    fun computeStreak(cadence: String, currentStreak: Int, lastPeriod: Long?, thisPeriod: Long): Int {
+        if (lastPeriod == null) return 1
+        if (thisPeriod == lastPeriod) return maxOf(currentStreak, 1) // same period, no change
+        return if (Cadences.advancesStreak(cadence, lastPeriod, thisPeriod)) currentStreak + 1 else 1
     }
 
     /** Aggregates the achievement rules read (Phase 3/4 fields default to 0 until built). */
