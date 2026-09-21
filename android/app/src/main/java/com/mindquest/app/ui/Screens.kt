@@ -1,5 +1,6 @@
 package com.mindquest.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,8 +12,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.HabitEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.ProfileEntity
+import com.mindquest.app.data.QuestEntity
 import android.Manifest
 import android.app.TimePickerDialog
 import android.content.Context
@@ -20,12 +23,18 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
+import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.Reminders
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.GameEngine
 import kotlinx.coroutines.launch
+
+private val questStamp = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
 
 // ---------- shared bits ----------
 
@@ -73,7 +82,7 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
     val bestStreak by produceState(0, profile.xp) { value = repo.maxStreak() }
     val quests by repo.observeActiveQuests().collectAsState(emptyList())
     val habits by repo.observeHabits().collectAsState(emptyList())
-    val pending = habits.filter { !repo.isCheckedInToday(it) }
+    val pending = habits.filter { !repo.isCheckedInThisPeriod(it) }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -114,8 +123,13 @@ private val DIFFICULTIES = listOf("trivial", "easy", "normal", "hard", "epic")
 fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val quests by repo.observeAllQuests().collectAsState(emptyList())
+    // One subscription for the whole board rather than one per card: a flow per quest would
+    // mean a new Room query every time the list re-composed.
+    val allPhotos by repo.observeAttachments("quest").collectAsState(emptyList())
+    val questPhotos = allPhotos.groupBy { it.ownerId }
     var title by remember { mutableStateOf("") }
     var difficulty by remember { mutableStateOf("normal") }
+    var editingQuest by remember { mutableStateOf<QuestEntity?>(null) }
 
     val drafts = quests.filter { it.status == "draft" }
     val active = quests.filter { it.status == "active" }
@@ -129,6 +143,21 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         if (!categoryChosen) newCategory = Categories.classify(title)
     }
     val shownActive = active.filter { categoryFilter == null || it.category == categoryFilter }
+
+    editingQuest?.let { quest ->
+        EditQuestDialog(
+            initialTitle = quest.title,
+            initialDifficulty = quest.difficulty,
+            initialDueAt = quest.dueAt,
+            difficulties = DIFFICULTIES,
+            xpFor = { Catalogs.difficultyXp[it] },
+            onDismiss = { editingQuest = null },
+            onSave = { newTitle, newDifficulty, dueAt ->
+                editingQuest = null
+                scope.launch { repo.editQuest(quest.id, newTitle, newDifficulty, dueAt) }
+            },
+        )
+    }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -212,9 +241,32 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         if (active.isEmpty()) item { Text("The board is clear.", color = Muted) }
         items(shownActive) { q ->
             Card { Column(Modifier.padding(12.dp)) {
-                Text(q.title, color = Parchment)
-                Text("${q.difficulty} · +${q.xpReward} XP", style = MaterialTheme.typography.bodySmall, color = Rune)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        q.title,
+                        color = Parchment,
+                        modifier = Modifier.weight(1f).clickable { editingQuest = q },
+                    )
+                    TextButton(
+                        onClick = { editingQuest = q },
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) { Text("✎", color = Muted) }
+                }
+                Text(
+                    buildString {
+                        append("${q.difficulty} · +${q.xpReward} XP")
+                        q.dueAt?.let { append(" · ⏳ ${questStamp.format(Date(it))}") }
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = Rune,
+                )
+                EditedStamp(q.updatedAt)
                 CategoryChip(q.category) { scope.launch { repo.setQuestCategory(q.id, it) } }
+                // The photo trail: proof of the run, the receipt, the before-and-after.
+                PhotoStrip(
+                    photos = questPhotos[q.id].orEmpty(),
+                    onAdd = { path -> scope.launch { repo.addAttachment("quest", q.id, path) } },
+                    onRemove = { scope.launch { repo.deleteAttachment(it.id) } },
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { scope.launch { repo.abandonQuest(q.id) } }) { Text("Abandon") }
                     Button(onClick = {
@@ -241,9 +293,7 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     }
 }
 
-// ---------- Habits ----------
-
-private val CADENCES = listOf("daily", "weekdays", "weekly")
+// ---------- Habits / recurring missions ----------
 
 @Composable
 fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
@@ -260,22 +310,45 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 
     val scope = rememberCoroutineScope()
     val habits by repo.observeHabits().collectAsState(emptyList())
+    val allPhotos by repo.observeAttachments("habit").collectAsState(emptyList())
+    val photosByHabit = allPhotos.groupBy { it.ownerId }
     var title by remember { mutableStateOf("") }
     var cadence by remember { mutableStateOf("daily") }
+    var editing by remember { mutableStateOf<HabitEntity?>(null) }
+
+    editing?.let { habit ->
+        EditMissionDialog(
+            initialTitle = habit.title,
+            initialCadence = habit.cadence,
+            initialTargetNote = habit.targetNote,
+            initialTargetDate = habit.targetDate,
+            onDismiss = { editing = null },
+            onSave = { name, newCadence, targetNote, targetDate ->
+                editing = null
+                scope.launch {
+                    repo.editHabit(habit.id, name, newCadence, targetNote, targetDate)
+                    notify("Saved — ${Cadences.of(newCadence).label}.")
+                }
+            },
+        )
+    }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Daily Missions", style = MaterialTheme.typography.headlineMedium, color = Parchment) }
+        item { Text("Missions", style = MaterialTheme.typography.headlineMedium, color = Parchment) }
+        item {
+            Text(
+                "Anything that comes round again — every evening, every Monday, or the 1st of " +
+                    "each month, quarter, half-year or year.",
+                style = MaterialTheme.typography.bodySmall, color = Muted,
+            )
+        }
         item {
             Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(title, { title = it }, label = { Text("New mission") }, singleLine = true, modifier = Modifier.weight(1f))
                     MicButton { title = it }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    CADENCES.forEach { c ->
-                        FilterChip(selected = cadence == c, onClick = { cadence = c }, label = { Text(c) })
-                    }
-                }
+                CadenceRow(selected = cadence, onSelect = { cadence = it })
                 Button(
                     onClick = {
                         if (title.isNotBlank()) {
@@ -287,43 +360,71 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 ) { Text("Forge") }
             } }
         }
-        if (habits.isEmpty()) item { Text("No missions yet. Small daily deeds build legends.", color = Muted) }
+        if (habits.isEmpty()) item { Text("No missions yet. Small repeated deeds build legends.", color = Muted) }
         items(habits) { h ->
-            val doneToday = repo.isCheckedInToday(h)
+            val cadenceOf = Cadences.of(h.cadence)
+            val doneThisPeriod = repo.isCheckedInThisPeriod(h)
             Card { Column(Modifier.padding(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(h.title, color = Parchment)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(h.title, color = Parchment, modifier = Modifier.weight(1f).clickable { editing = h })
+                    TextButton(
+                        onClick = { editing = h },
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) { Text("✎", color = Muted) }
                     TextButton(onClick = { scope.launch { repo.deleteHabit(h.id) } }) { Text("remove", color = Muted) }
                 }
-                Text("🔥 streak ${h.streak} · 🏔️ best ${h.bestStreak} · ${h.cadence}", style = MaterialTheme.typography.bodySmall, color = Muted)
+                Text(
+                    "🔥 streak ${h.streak} · 🏔️ best ${h.bestStreak} · ${cadenceOf.label}",
+                    style = MaterialTheme.typography.bodySmall, color = Muted,
+                )
+                // What it is all for, and how much runway is left. The countdown is the part
+                // that does the work — "80 kg" alone never made anyone get on the scales.
+                h.targetNote?.let { target ->
+                    Text(
+                        buildString {
+                            append("🎯 $target")
+                            h.targetDate?.let { append(" by ${Cadences.formatTarget(it)}") }
+                            h.targetDate?.let { date ->
+                                Cadences.timeLeft(h.cadence, date)?.let { append(" · $it") }
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall, color = Rune,
+                    )
+                }
+                EditedStamp(h.updatedAt)
 
-                // The daily nudge. It stays quiet on days the mission is already done, so
-                // it only ever speaks up about the days that would otherwise slip.
+                // The nudge. It stays quiet in periods the mission is already done, so it
+                // only ever speaks up about the ones that would otherwise slip.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
                         ensureNotifPermission()
                         pickTimeOfDay(context, h.remindMinuteOfDay) { minute ->
                             scope.launch {
                                 repo.setHabitReminder(h.id, minute)
-                                notify("Nudging you daily at ${Reminders.formatTimeOfDay(minute)}.")
+                                notify("Nudging you ${cadenceOf.label} at ${Reminders.formatTimeOfDay(minute)}.")
                             }
                         }
                     }) {
                         Text(
-                            h.remindMinuteOfDay?.let { "⏰ ${Reminders.formatTimeOfDay(it)} daily" }
-                                ?: "⏰ Remind daily",
+                            h.remindMinuteOfDay?.let { "⏰ ${Reminders.formatTimeOfDay(it)} ${cadenceOf.label}" }
+                                ?: "⏰ Remind ${cadenceOf.label}",
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                     if (h.remindMinuteOfDay != null) {
                         TextButton(onClick = {
-                            scope.launch { repo.setHabitReminder(h.id, null); notify("Daily nudge off.") }
+                            scope.launch { repo.setHabitReminder(h.id, null); notify("Nudge off.") }
                         }) { Text("off", style = MaterialTheme.typography.labelSmall, color = Muted) }
                     }
                 }
+                PhotoStrip(
+                    photos = photosByHabit[h.id].orEmpty(),
+                    onAdd = { path -> scope.launch { repo.addAttachment("habit", h.id, path) } },
+                    onRemove = { scope.launch { repo.deleteAttachment(it.id) } },
+                )
                 Spacer(Modifier.height(6.dp))
-                if (doneToday) {
-                    Text("✓ Completed today", color = Verdant)
+                if (doneThisPeriod) {
+                    Text("✓ Done this ${cadenceOf.unit}", color = Verdant)
                 } else {
                     Button(onClick = {
                         scope.launch {
@@ -334,7 +435,7 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                                 r.achievementsUnlocked.forEach { append(" · ${it.icon} ${it.name}") }
                             })
                         }
-                    }) { Text("Complete today's mission") }
+                    }) { Text("Complete this ${cadenceOf.unit}'s mission") }
                 }
             } }
         }

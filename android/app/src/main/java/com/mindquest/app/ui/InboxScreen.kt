@@ -1,12 +1,10 @@
 package com.mindquest.app.ui
 
 import android.Manifest
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
-import android.content.Context
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,7 +23,6 @@ import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -49,6 +46,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     var customFolder by remember { mutableStateOf<String?>(null) }
     var newFolderOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<FolderEntity?>(null) }
+    var editing by remember { mutableStateOf<NoteEntity?>(null) }
     val openFolder = customFolders.firstOrNull { it.id == customFolder }
     val notes = allNotes.filter {
         when {
@@ -108,6 +106,25 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     val id = repo.createFolder(name)
                     customFolder = id; folder = null
                     notify("Folder “$name” created — everything you add now goes inside it.")
+                }
+            },
+        )
+    }
+
+    editing?.let { note ->
+        EditNoteDialog(
+            initialText = note.text,
+            initialRemindAt = note.remindAt,
+            onDismiss = { editing = null },
+            onSave = { text, remindAt ->
+                editing = null
+                ensureNotifPermission()
+                scope.launch {
+                    repo.editNote(note.id, text, remindAt)
+                    notify(
+                        if (remindAt == null) "Saved."
+                        else "Saved · ⏰ ${timeFmt.format(Date(remindAt))}",
+                    )
                 }
             },
         )
@@ -189,6 +206,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 NoteCard(
                     note = note,
                     onToggleDone = { scope.launch { repo.setNoteDone(note.id, !note.done) } },
+                    onEdit = { editing = note },
                     onRemind = {
                         ensureNotifPermission()
                         pickDateTime(context) { at ->
@@ -278,6 +296,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 private fun NoteCard(
     note: NoteEntity,
     onToggleDone: () -> Unit,
+    onEdit: () -> Unit,
     onRemind: () -> Unit,
     onClearRemind: () -> Unit,
     onQuest: () -> Unit,
@@ -291,13 +310,18 @@ private fun NoteCard(
                 TextButton(onClick = onToggleDone, contentPadding = PaddingValues(horizontal = 4.dp)) {
                     Text(if (note.done) "✓" else "○", color = if (note.done) Sage else Rune)
                 }
+                // Tapping the line itself opens it for editing — the obvious gesture, and it
+                // keeps the row from filling up with buttons.
                 Text(
                     note.text,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).clickable(onClick = onEdit),
                     color = if (note.done) Muted else Parchment,
                     textDecoration = if (note.done) TextDecoration.LineThrough else null,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                TextButton(onClick = onEdit, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text("✎", color = Muted)
+                }
             }
             Row(
                 Modifier.fillMaxWidth().padding(start = 8.dp),
@@ -313,6 +337,7 @@ private fun NoteCard(
                     },
                     style = MaterialTheme.typography.labelSmall, color = Muted,
                 )
+                EditedStamp(note.updatedAt)
             }
             CategoryChip(note.category, onCategory)
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -331,26 +356,4 @@ private fun NoteCard(
             }
         }
     }
-}
-
-/** Native date → time picker chain; returns the chosen instant in epoch millis. */
-private fun pickDateTime(context: Context, onPicked: (Long) -> Unit) {
-    val now = Calendar.getInstance()
-    DatePickerDialog(
-        context,
-        { _, year, month, day ->
-            TimePickerDialog(
-                context,
-                { _, hour, minute ->
-                    val c = Calendar.getInstance().apply {
-                        set(year, month, day, hour, minute, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }
-                    onPicked(c.timeInMillis)
-                },
-                now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), false,
-            ).show()
-        },
-        now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH),
-    ).apply { datePicker.minDate = System.currentTimeMillis() - 1000 }.show()
 }

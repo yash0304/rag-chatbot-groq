@@ -25,8 +25,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WeeklyReviewEntity::class,
         NoteEntity::class,
         FolderEntity::class,
+        AttachmentEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -41,6 +42,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun reviewDao(): ReviewDao
     abstract fun noteDao(): NoteDao
     abstract fun folderDao(): FolderDao
+    abstract fun attachmentDao(): AttachmentDao
 
     companion object {
         @Volatile
@@ -91,6 +93,29 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /**
+         * v9→v10: photos on quests and missions, a target for a mission to count down to,
+         * and an edited-at stamp on everything the user can now change. Additive.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `attachments` (`id` TEXT NOT NULL, " +
+                        "`ownerKind` TEXT NOT NULL, `ownerId` TEXT NOT NULL, `path` TEXT NOT NULL, " +
+                        "`caption` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_attachments_ownerKind_ownerId` " +
+                        "ON `attachments` (`ownerKind`, `ownerId`)",
+                )
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `updatedAt` INTEGER")
+                db.execSQL("ALTER TABLE `quests` ADD COLUMN `updatedAt` INTEGER")
+                db.execSQL("ALTER TABLE `habits` ADD COLUMN `updatedAt` INTEGER")
+                db.execSQL("ALTER TABLE `habits` ADD COLUMN `targetNote` TEXT")
+                db.execSQL("ALTER TABLE `habits` ADD COLUMN `targetDate` TEXT")
             }
         }
 
@@ -148,7 +173,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
                 )
                     // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                     // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { instance = it }

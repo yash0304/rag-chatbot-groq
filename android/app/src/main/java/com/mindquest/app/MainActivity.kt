@@ -40,7 +40,7 @@ private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
     Inbox("Inbox", "📥"),
     Quests("Quests", "⚔️"),
-    Habits("Daily Missions", "🔥"),
+    Habits("Missions", "🔥"),
     Goals("Story Arcs", "📖"),
     Archives("Archives", "📜"),
     Narrator("Narrator", "🔮"),

@@ -220,6 +220,30 @@ interface FolderDao {
 }
 
 @Dao
+interface AttachmentDao {
+    @Upsert
+    suspend fun upsert(attachment: AttachmentEntity)
+
+    @Query("DELETE FROM attachments WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM attachments WHERE id = :id")
+    suspend fun get(id: String): AttachmentEntity?
+
+    @Query("SELECT * FROM attachments WHERE ownerKind = :kind ORDER BY createdAt")
+    fun observeOfKind(kind: String): Flow<List<AttachmentEntity>>
+
+    @Query("SELECT * FROM attachments WHERE ownerKind = :kind AND ownerId = :ownerId ORDER BY createdAt")
+    suspend fun of(kind: String, ownerId: String): List<AttachmentEntity>
+
+    @Query("DELETE FROM attachments WHERE ownerKind = :kind AND ownerId = :ownerId")
+    suspend fun deleteAllOf(kind: String, ownerId: String)
+
+    @Query("SELECT * FROM attachments")
+    suspend fun allAttachments(): List<AttachmentEntity>
+}
+
+@Dao
 interface NoteDao {
     @Upsert
     suspend fun upsert(note: NoteEntity)

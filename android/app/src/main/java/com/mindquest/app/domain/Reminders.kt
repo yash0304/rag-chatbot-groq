@@ -14,17 +14,15 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.mindquest.app.data.HabitEntity
 import com.mindquest.app.data.MindQuestDatabase
 import com.mindquest.app.data.SettingsStore
 import com.mindquest.app.widget.TodayWidget
 import java.time.LocalDate
-import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
@@ -95,47 +93,52 @@ object Reminders {
         WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(TAG_PREFIX + noteId)
     }
 
-    // ---------- daily missions ----------
+    // ---------- recurring missions ----------
 
     /**
-     * Nudge a daily mission at the same time every day, e.g. 21:00 for "walk 5000 steps".
+     * Nudge a mission when its next period comes round — every evening, every Monday, or the
+     * 1st of every month, quarter, half-year or year.
      *
-     * A periodic request rather than a chain of one-shots, so the schedule survives the app
-     * being killed and the phone rebooting without anything having to re-arm it. The initial
-     * delay lands on the next occurrence of that time; after that WorkManager repeats daily.
+     * A chain of one-shots rather than one periodic request, because WorkManager's periods
+     * are a fixed number of milliseconds and a month is not. Thirty days repeated would slip
+     * off the 1st within a quarter and be a week adrift by the autumn. Each firing works out
+     * the next calendar date itself and arms the following one, and WorkManager persists a
+     * pending one-shot across app death and reboots exactly as it does a periodic request.
      */
-    fun scheduleDailyHabit(context: Context, habitId: String, title: String, minuteOfDay: Int) {
+    fun scheduleHabit(context: Context, habitId: String, minuteOfDay: Int, cadence: String) {
+        cancelHabitReminder(context, habitId)
+        armHabit(context, habitId, Cadences.millisUntilNextFire(cadence, minuteOfDay))
+    }
+
+    /**
+     * Arm the next firing from inside the worker that just fired. It skips the cancel that
+     * [scheduleHabit] does, since a worker cancelling its own tag would be cancelling itself.
+     */
+    fun rearmHabit(context: Context, habitId: String, minuteOfDay: Int, cadence: String) {
+        // Ask for the fire after this one: the current period's slot is now in the past, so
+        // nextFireAt naturally rolls forward, but a nudge set for 00:00 could still resolve
+        // to the moment that just passed if the worker ran early.
+        val delay = Cadences.millisUntilNextFire(cadence, minuteOfDay)
+            .coerceAtLeast(TimeUnit.MINUTES.toMillis(5))
+        armHabit(context, habitId, delay)
+    }
+
+    private fun armHabit(context: Context, habitId: String, delayMillis: Long) {
         ensureChannel(context)
-        val request = PeriodicWorkRequestBuilder<HabitReminderWorker>(1, TimeUnit.DAYS)
-            .setInitialDelay(millisUntilNext(minuteOfDay), TimeUnit.MILLISECONDS)
-            .setInputData(workDataOf(KEY_HABIT_ID to habitId, KEY_TEXT to title))
+        val request = OneTimeWorkRequestBuilder<HabitReminderWorker>()
+            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(KEY_HABIT_ID to habitId))
             .addTag(HABIT_TAG_PREFIX + habitId)
             .build()
-        // REPLACE so changing the time re-aims the existing schedule instead of stacking a
-        // second one on top of it.
-        WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
-            HABIT_TAG_PREFIX + habitId,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request,
-        )
+        WorkManager.getInstance(context.applicationContext).enqueue(request)
     }
 
-    fun cancelDailyHabit(context: Context, habitId: String) {
-        WorkManager.getInstance(context.applicationContext)
-            .cancelUniqueWork(HABIT_TAG_PREFIX + habitId)
-    }
-
-    /** Milliseconds from now until the next time the clock reads [minuteOfDay]. */
-    private fun millisUntilNext(minuteOfDay: Int): Long {
-        val now = Calendar.getInstance()
-        val target = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, minuteOfDay / 60)
-            set(Calendar.MINUTE, minuteOfDay % 60)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        if (!target.after(now)) target.add(Calendar.DAY_OF_YEAR, 1)
-        return target.timeInMillis - now.timeInMillis
+    fun cancelHabitReminder(context: Context, habitId: String) {
+        val manager = WorkManager.getInstance(context.applicationContext)
+        manager.cancelAllWorkByTag(HABIT_TAG_PREFIX + habitId)
+        // Older builds scheduled these as unique periodic work under the same name; cancel
+        // that too so upgrading doesn't leave a second, daily nudge running unseen.
+        manager.cancelUniqueWork(HABIT_TAG_PREFIX + habitId)
     }
 
     fun formatTimeOfDay(minuteOfDay: Int): String =
@@ -243,11 +246,16 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
 
 
 /**
- * The daily nudge for a mission such as "walk 5000 steps".
+ * The nudge for a recurring mission — "walk 5000 steps" every evening, "weigh in" on the 1st
+ * of each month.
  *
- * It checks the streak first and stays silent if the mission is already done today — the
- * point is to catch the days you would otherwise miss, not to announce itself regardless.
- * When it does fire it uses the same repeat-until-done chain as note reminders.
+ * It stays silent when the mission is already done for the current period, because the point
+ * is to catch the ones that would otherwise slip, not to announce itself regardless. When
+ * the mission is working towards something it says so: a goal of 80 kg by March 2027 is
+ * worth being reminded of precisely when you are deciding whether to bother this month.
+ *
+ * Whatever it decides, it arms the next firing before it returns — that chain is the whole
+ * schedule, so dropping it would silently end the reminder.
  */
 class HabitReminderWorker(appContext: Context, params: WorkerParameters) :
     CoroutineWorker(appContext, params) {
@@ -258,19 +266,44 @@ class HabitReminderWorker(appContext: Context, params: WorkerParameters) :
 
         val habit = runCatching {
             MindQuestDatabase.get(applicationContext).habitDao().get(habitId)
-        }.getOrNull() ?: return Result.success() // deleted; the periodic work will be cancelled too
+        }.getOrNull() ?: return Result.success() // deleted, so the chain ends here
 
-        val today = LocalDate.now().toString()
-        if (habit.lastCheckinDate == today) return Result.success() // already done
+        val minute = habit.remindMinuteOfDay
+            ?: return Result.success() // nudge switched off since this was armed
+
+        val today = LocalDate.now()
+        val thisPeriod = Cadences.periodIndex(habit.cadence, today)
+        val lastPeriod = habit.lastCheckinDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { Cadences.periodIndex(habit.cadence, it) }
+
+        if (lastPeriod != thisPeriod) post(habitId, habit)
+
+        Reminders.rearmHabit(applicationContext, habitId, minute, habit.cadence)
+        return Result.success()
+    }
+
+    private fun post(habitId: String, habit: HabitEntity) {
+        val cadence = Cadences.of(habit.cadence)
+        val body = buildString {
+            append(habit.title)
+            habit.targetNote?.takeIf { it.isNotBlank() }?.let { target ->
+                append("\n🎯 $target")
+                habit.targetDate?.let { append(" by ${Cadences.formatTarget(it)}") }
+                habit.targetDate?.let { date ->
+                    Cadences.timeLeft(habit.cadence, date)?.let { append(" · $it") }
+                }
+            }
+            if (habit.streak > 0) append("\n🔥 ${habit.streak}-${cadence.unit} streak on the line")
+        }
 
         if (Reminders.hasPermission(applicationContext)) {
             Reminders.ensureChannel(applicationContext)
-            val streakNote = if (habit.streak > 0) " · ${habit.streak}-day streak on the line" else ""
             val notification = NotificationCompat.Builder(applicationContext, Reminders.CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_popup_reminder)
-                .setContentTitle("Daily mission")
-                .setContentText(habit.title + streakNote)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(habit.title + streakNote))
+                .setContentTitle("${cadence.label.replaceFirstChar { it.uppercase() }} mission")
+                .setContentText(habit.title)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .build()
@@ -285,8 +318,7 @@ class HabitReminderWorker(appContext: Context, params: WorkerParameters) :
         val settings = SettingsStore(applicationContext)
         val number = settings.reminderPhone()
         if (settings.smsRemindersEnabled() && number != null && Reminders.hasSmsPermission(applicationContext)) {
-            Reminders.sendSms(applicationContext, number, "MindQuest: ${habit.title}")
+            Reminders.sendSms(applicationContext, number, "MindQuest: ${body.replace('\n', ' ')}")
         }
-        return Result.success()
     }
 }

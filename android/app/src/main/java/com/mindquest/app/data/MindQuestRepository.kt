@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.room.withTransaction
+import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.DateParse
@@ -97,7 +98,7 @@ enum class GlobalKind(val label: String, val icon: String) {
     Note("Inbox", "📥"),
     Document("Archives", "📜"),
     Quest("Quests", "⚔️"),
-    Habit("Daily Missions", "🔥"),
+    Habit("Missions", "🔥"),
     Goal("Story Arcs", "📖"),
 }
 
@@ -145,6 +146,13 @@ data class ExportBundle(
     val chat: List<ChatMessageEntity> = emptyList(),
     val reviews: List<WeeklyReviewEntity> = emptyList(),
     val notes: List<NoteEntity> = emptyList(),
+    val folders: List<FolderEntity> = emptyList(),
+    /**
+     * Photo records, not the photos. The files live in the app's private storage and a JSON
+     * export is text, so these paths resolve on this device and on no other — enough to
+     * rebuild the trail after a reinstall-in-place, honestly useless after a phone change.
+     */
+    val attachments: List<AttachmentEntity> = emptyList(),
 )
 
 /**
@@ -164,6 +172,7 @@ class MindQuestRepository(private val context: Context) {
     private val reviewDao = db.reviewDao()
     private val noteDao = db.noteDao()
     private val folderDao = db.folderDao()
+    private val attachmentDao = db.attachmentDao()
     private val json = Json { ignoreUnknownKeys = true }
 
     // Resolved on first use: the MiniLM model if its assets shipped, else hashing vectors.
@@ -302,41 +311,95 @@ class MindQuestRepository(private val context: Context) {
 
     fun observeHabits(): Flow<List<HabitEntity>> = habitDao.observeAll()
 
-    fun isCheckedInToday(habit: HabitEntity): Boolean = habit.lastCheckinDate == LocalDate.now().toString()
+    /**
+     * Is this mission already done for the period it is currently in? A monthly mission
+     * ticked off on the 3rd is done for that whole month, not just that Tuesday.
+     */
+    fun isCheckedInThisPeriod(habit: HabitEntity): Boolean {
+        val last = habit.lastCheckinDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: return false
+        return Cadences.periodIndex(habit.cadence, last) ==
+            Cadences.periodIndex(habit.cadence, LocalDate.now())
+    }
 
-    suspend fun createHabit(title: String, cadence: String) {
-        habitDao.upsert(HabitEntity(id = UUID.randomUUID().toString(), title = title.trim(), cadence = cadence))
+    suspend fun createHabit(
+        title: String,
+        cadence: String,
+        targetNote: String? = null,
+        targetDate: String? = null,
+    ): String {
+        val id = UUID.randomUUID().toString()
+        habitDao.upsert(
+            HabitEntity(
+                id = id,
+                title = title.trim(),
+                cadence = cadence,
+                targetNote = targetNote?.trim()?.takeIf { it.isNotBlank() },
+                targetDate = targetDate,
+            ),
+        )
+        return id
+    }
+
+    /**
+     * Change a mission's wording, how often it comes round, or what it is working towards.
+     * Changing the cadence re-aims the nudge, since "the 1st of the month" and "every
+     * evening" are not the same appointment.
+     */
+    suspend fun editHabit(
+        id: String,
+        title: String,
+        cadence: String,
+        targetNote: String?,
+        targetDate: String?,
+    ) {
+        val habit = habitDao.get(id) ?: return
+        val updated = habit.copy(
+            title = title.trim().ifBlank { habit.title },
+            cadence = cadence,
+            targetNote = targetNote?.trim()?.takeIf { it.isNotBlank() },
+            targetDate = targetDate,
+            updatedAt = System.currentTimeMillis(),
+        )
+        habitDao.upsert(updated)
+        updated.remindMinuteOfDay?.let {
+            Reminders.scheduleHabit(context, id, it, updated.cadence)
+        }
+        TodayWidget.refresh(context)
     }
 
     suspend fun deleteHabit(id: String) {
-        Reminders.cancelDailyHabit(context, id) // no point nudging about a mission that's gone
+        Reminders.cancelHabitReminder(context, id) // no point nudging about a mission that's gone
+        attachmentDao.of("habit", id).forEach { PhotoStore.delete(it.path) }
+        attachmentDao.deleteAllOf("habit", id)
         habitDao.delete(id)
         TodayWidget.refresh(context)
     }
 
     /**
-     * Set or clear the daily nudge for a mission, e.g. 21:00 for "walk 5000 steps".
-     * [minuteOfDay] is minutes past midnight; null turns the nudge off.
+     * Set or clear the nudge for a mission — 21:00 daily for "walk 5000 steps", 09:00 on the
+     * 1st for a monthly weigh-in. [minuteOfDay] is minutes past midnight; null turns it off.
      */
     suspend fun setHabitReminder(id: String, minuteOfDay: Int?) {
         val habit = habitDao.get(id) ?: return
         habitDao.upsert(habit.copy(remindMinuteOfDay = minuteOfDay))
         if (minuteOfDay == null) {
-            Reminders.cancelDailyHabit(context, id)
+            Reminders.cancelHabitReminder(context, id)
         } else {
-            Reminders.scheduleDailyHabit(context, id, habit.title, minuteOfDay)
+            Reminders.scheduleHabit(context, id, minuteOfDay, habit.cadence)
         }
     }
 
     /**
-     * Re-arm every mission nudge. WorkManager keeps periodic work across reboots on its own,
-     * but this repairs the case where its records were cleared — app data wiped, a restore
-     * from backup — and costs nothing when everything is already scheduled.
+     * Re-arm every mission nudge. The schedule is a chain of one-shots that each arm the
+     * next, and WorkManager keeps a pending one across reboots on its own — but this repairs
+     * the case where the chain was broken (app data wiped, a restore from backup, a firing
+     * that never happened) and costs nothing when everything is already scheduled.
      */
     suspend fun rearmHabitReminders() = withContext(Dispatchers.IO) {
         habitDao.allHabits().forEach { habit ->
             habit.remindMinuteOfDay?.let {
-                Reminders.scheduleDailyHabit(context, habit.id, habit.title, it)
+                Reminders.scheduleHabit(context, habit.id, it, habit.cadence)
             }
         }
     }
@@ -346,9 +409,16 @@ class MindQuestRepository(private val context: Context) {
         val today = LocalDate.now()
         val todayIso = today.toString()
         if (habitDao.checkinExists(id, todayIso) > 0) return@withTransaction CheckinResult(alreadyDone = true)
+        // One check-in per period, not per day: a monthly mission ticked off on the 3rd
+        // shouldn't pay out again on the 10th.
+        if (isCheckedInThisPeriod(habit)) return@withTransaction CheckinResult(alreadyDone = true)
 
-        val lastEpochDay = habit.lastCheckinDate?.let { LocalDate.parse(it).toEpochDay() }
-        val newStreak = GameEngine.computeStreak(habit.cadence, habit.streak, lastEpochDay, today.toEpochDay())
+        val lastPeriod = habit.lastCheckinDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { Cadences.periodIndex(habit.cadence, it) }
+        val newStreak = GameEngine.computeStreak(
+            habit.cadence, habit.streak, lastPeriod, Cadences.periodIndex(habit.cadence, today),
+        )
         val multiplier = GameEngine.streakMultiplier(newStreak)
         val xp = (habit.xpBase * multiplier).toInt()
 
@@ -835,6 +905,8 @@ class MindQuestRepository(private val context: Context) {
         chat = chatDao.allMessages(),
         reviews = reviewDao.allReviews(),
         notes = noteDao.allNotes(),
+        folders = folderDao.all(),
+        attachments = attachmentDao.allAttachments(),
     )
 
     suspend fun exportJson(): String {
@@ -927,14 +999,32 @@ class MindQuestRepository(private val context: Context) {
     /** Set or clear a note's reminder, rescheduling the notification. */
     suspend fun setNoteReminder(id: String, remindAt: Long?) {
         val note = noteDao.get(id) ?: return
-        noteDao.upsert(note.copy(remindAt = remindAt))
+        noteDao.upsert(note.copy(remindAt = remindAt, updatedAt = System.currentTimeMillis()))
         Reminders.cancel(context, id)
         if (remindAt != null) Reminders.schedule(context, id, note.text, remindAt)
         TodayWidget.refresh(context)
     }
 
+    /**
+     * Change what a note says and when it should go off, in one move.
+     *
+     * The reminder is always torn down and rebuilt rather than left alone when the time
+     * hasn't changed: the pending work carries the old wording as a fallback, so editing the
+     * words without re-scheduling would leave a reminder that fires saying the wrong thing.
+     */
+    suspend fun editNote(id: String, text: String, remindAt: Long?) {
+        val note = noteDao.get(id) ?: return
+        val body = text.trim().ifBlank { note.text }
+        noteDao.upsert(note.copy(text = body, remindAt = remindAt, updatedAt = System.currentTimeMillis()))
+        Reminders.cancel(context, id)
+        if (remindAt != null) Reminders.schedule(context, id, body, remindAt)
+        TodayWidget.refresh(context)
+    }
+
     suspend fun deleteNote(id: String) {
         Reminders.cancel(context, id)
+        attachmentDao.of("note", id).forEach { PhotoStore.delete(it.path) }
+        attachmentDao.deleteAllOf("note", id)
         noteDao.delete(id)
         TodayWidget.refresh(context)
     }
@@ -979,6 +1069,54 @@ class MindQuestRepository(private val context: Context) {
     suspend fun setQuestCategory(id: String, category: String) {
         val quest = questDao.get(id) ?: return
         questDao.upsert(quest.copy(category = category, categoryLocked = true))
+    }
+
+    /**
+     * Change a quest's wording, difficulty or deadline. The XP follows the difficulty, so
+     * downgrading an epic you over-estimated corrects the reward rather than leaving you
+     * paid for work you didn't do.
+     */
+    suspend fun editQuest(id: String, title: String, difficulty: String, dueAt: Long?) {
+        val quest = questDao.get(id) ?: return
+        val diff = if (difficulty in Catalogs.difficultyXp) difficulty else quest.difficulty
+        questDao.upsert(
+            quest.copy(
+                title = title.trim().ifBlank { quest.title },
+                difficulty = diff,
+                xpReward = Catalogs.difficultyXp[diff] ?: quest.xpReward,
+                dueAt = dueAt,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+        TodayWidget.refresh(context)
+    }
+
+    // ---------- photos ----------
+
+    fun observeAttachments(kind: String): Flow<List<AttachmentEntity>> =
+        attachmentDao.observeOfKind(kind)
+
+    /**
+     * Keep a photo against a quest or mission. [sourceUri] is copied into the app's own
+     * storage by the caller via PhotoStore; this only records where it landed.
+     */
+    suspend fun addAttachment(kind: String, ownerId: String, path: String, caption: String? = null) {
+        attachmentDao.upsert(
+            AttachmentEntity(
+                id = UUID.randomUUID().toString(),
+                ownerKind = kind,
+                ownerId = ownerId,
+                path = path,
+                caption = caption?.trim()?.takeIf { it.isNotBlank() },
+            ),
+        )
+    }
+
+    /** Removing a photo deletes the file too — nothing else refers to it. */
+    suspend fun deleteAttachment(id: String) {
+        val attachment = attachmentDao.get(id) ?: return
+        PhotoStore.delete(attachment.path)
+        attachmentDao.delete(id)
     }
 
     suspend fun setDocumentCategory(id: String, category: String) {
