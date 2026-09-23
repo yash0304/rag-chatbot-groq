@@ -114,9 +114,52 @@ data class HabitCheckinEntity(
 data class GoalEntity(
     @PrimaryKey val id: String,
     val title: String,
+    /** For a target goal, the sentence it was created from — "1crore inr earn by March 2027". */
     val narrative: String? = null,
     val arcTheme: String? = null,
     val status: String = "active", // active|completed|archived
+    /**
+     * A goal is either a story arc (a list of milestones, the original kind) or a target:
+     * a number to reach by a date — "80 kg by March 2027". A target goal has [targetValue]
+     * or [changeValue] set; an arc has neither.
+     */
+    val targetValue: Double? = null,
+    /**
+     * "Lose 10 kg" before its first weigh-in: a signed change with no starting point yet.
+     * The first reading turns it into an absolute [targetValue] and clears this.
+     */
+    val changeValue: Double? = null,
+    val unit: String? = null, // "kg", "₹", "books"…
+    val deadline: String? = null, // ISO yyyy-MM-dd
+    /** Minutes past midnight for the check-in nudge; null = off. */
+    val checkinMinuteOfDay: Int? = null,
+    /**
+     * How often to check in, as a Cadences id; null means monthly. Nullable rather than
+     * defaulted so the migration can add it as a plain column — a text default has to match
+     * Room's expectations character for character, and a mismatch refuses to open the data.
+     */
+    val checkinCadence: String? = null,
+    val updatedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** A number to reach by a date, as opposed to a story arc of milestones. */
+val GoalEntity.isTarget: Boolean get() = targetValue != null || changeValue != null
+
+/** The check-in cadence with its default applied. */
+val GoalEntity.cadence: String get() = checkinCadence ?: "monthly"
+
+/**
+ * One reading against a target goal: the scales on the 1st, the savings total at month end.
+ * The history is the point — a goal you can't see moving is a goal you stop believing in.
+ */
+@Entity(tableName = "goal_progress", indices = [Index("goalId")])
+@Serializable
+data class GoalProgressEntity(
+    @PrimaryKey val id: String,
+    val goalId: String,
+    val value: Double,
+    val note: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

@@ -14,6 +14,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.HabitEntity
 import com.mindquest.app.data.MindQuestRepository
+import com.mindquest.app.data.isTarget
+import com.mindquest.app.domain.GoalMath
+import com.mindquest.app.domain.GoalParse
 import com.mindquest.app.data.ProfileEntity
 import com.mindquest.app.data.QuestEntity
 import android.Manifest
@@ -83,6 +86,10 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
     val quests by repo.observeActiveQuests().collectAsState(emptyList())
     val habits by repo.observeHabits().collectAsState(emptyList())
     val pending = habits.filter { !repo.isCheckedInThisPeriod(it) }
+    val goals by repo.observeGoals().collectAsState(emptyList())
+    val progress by repo.observeGoalProgress().collectAsState(emptyList())
+    val activeGoals = goals.filter { it.isTarget && it.status == "active" }
+    val readings = progress.groupBy { it.goalId }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -95,6 +102,47 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
                 StatTile("XP this week", "$xp7d", "⚡", Modifier.weight(1f))
                 StatTile("Quests done", "$questsDone", "⚔️", Modifier.weight(1f))
                 StatTile("Best streak", "$bestStreak", "🔥", Modifier.weight(1f))
+            }
+        }
+        // Goals first: the long game is the easiest thing to lose sight of, so it gets the
+        // top of the page every time the app opens.
+        if (activeGoals.isNotEmpty()) {
+            item { Text("🎯 Goals", style = MaterialTheme.typography.titleMedium, color = Rune) }
+            items(activeGoals, key = { it.id }) { g ->
+                val unit = g.unit ?: ""
+                val deadline = g.deadline?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+                val s = deadline?.let { GoalMath.status(g.targetValue, unit, it, readings[g.id].orEmpty().map { r -> r.value }) }
+                Card { Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(g.title, color = Parchment, fontWeight = FontWeight.Bold)
+                        deadline?.let {
+                            Text(
+                                Cadences.timeLeft("monthly", it.toString()) ?: "",
+                                style = MaterialTheme.typography.labelSmall, color = Muted,
+                            )
+                        }
+                    }
+                    s?.fraction?.let { f ->
+                        LinearProgressIndicator(
+                            progress = { f },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = Rune,
+                        )
+                    }
+                    val latest = s?.latest
+                    Text(
+                        when {
+                            s == null -> ""
+                            latest == null || (readings[g.id].isNullOrEmpty() && !GoalParse.accumulates(unit)) ->
+                                "No reading yet — log one in Goals."
+                            else -> buildString {
+                                append("Now ${GoalParse.format(latest, unit)}")
+                                s.perMonth?.let { append(" · ${GoalMath.describePace(it, unit)}") }
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall, color = Muted,
+                    )
+                } }
             }
         }
         item { Text("⚔️ Active quests", style = MaterialTheme.typography.titleMedium, color = Rune) }
@@ -214,6 +262,30 @@ fun QuestsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         )
                         Spacer(Modifier.width(6.dp))
                         CategoryChip(newCategory) { newCategory = it; categoryChosen = true }
+                    }
+                }
+                // "80 kg by March 2027" is a goal, not a quest: it has a number to reach and
+                // months to reach it, which a one-off quest can't track. Offer the better home.
+                val goalGuess = remember(title) { GoalParse.detect(title) }
+                if (goalGuess != null) {
+                    Card(colors = CardDefaults.cardColors(containerColor = Rune.copy(alpha = 0.12f))) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(
+                                "🎯 This is a goal: ${goalGuess.title} by ${Cadences.formatTarget(goalGuess.deadline.toString())}",
+                                style = MaterialTheme.typography.bodySmall, color = Parchment,
+                            )
+                            Text(
+                                "In Goals it gets a progress bar, the pace you need, and a check-in on the 1st of each month.",
+                                style = MaterialTheme.typography.labelSmall, color = Muted,
+                            )
+                            TextButton(onClick = {
+                                val t = title; title = ""
+                                scope.launch {
+                                    repo.createTargetGoal(goalGuess, narrative = t)
+                                    notify("🎯 ${goalGuess.title} → Goals")
+                                }
+                            }) { Text("Track in Goals") }
+                        }
                     }
                 }
                 Button(
@@ -390,6 +462,24 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         },
                         style = MaterialTheme.typography.bodySmall, color = Rune,
                     )
+                    // A mission with a number and a date is really a goal. Goals track readings
+                    // and pace; this moves the target there and leaves the mission as it is.
+                    val asGoal = remember(target, h.targetDate) {
+                        h.targetDate?.let { d ->
+                            runCatching { java.time.LocalDate.parse(d) }.getOrNull()?.let { date ->
+                                val month = date.month.getDisplayName(java.time.format.TextStyle.FULL, Locale.ENGLISH)
+                                GoalParse.detect("$target by $month ${date.year}")
+                            }
+                        }
+                    }
+                    if (asGoal != null) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                repo.createTargetGoal(asGoal, narrative = "${h.title}: $target")
+                                notify("🎯 ${asGoal.title} is now in Goals — log readings there.")
+                            }
+                        }) { Text("🎯 Track as goal", style = MaterialTheme.typography.labelSmall) }
+                    }
                 }
                 EditedStamp(h.updatedAt)
 
@@ -447,7 +537,7 @@ fun HabitsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
  * Pick a time of day for a daily nudge, returning minutes past midnight. Uses the framework
  * dialog rather than the Compose time picker, which is still experimental.
  */
-private fun pickTimeOfDay(context: Context, currentMinuteOfDay: Int?, onPicked: (Int) -> Unit) {
+internal fun pickTimeOfDay(context: Context, currentMinuteOfDay: Int?, onPicked: (Int) -> Unit) {
     val now = Calendar.getInstance()
     val hour = currentMinuteOfDay?.div(60) ?: now.get(Calendar.HOUR_OF_DAY)
     val minute = currentMinuteOfDay?.rem(60) ?: 0

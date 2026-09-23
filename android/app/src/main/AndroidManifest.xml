@@ -92,6 +92,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- Takes the number typed into a goal check-in's reply box. Not exported. -->
+        <receiver
+            android:name=".domain.GoalActionReceiver"
+            android:exported="false" />
+
         <!-- Done / Snooze buttons on reminders. Not exported: only our own notifications reach it. -->
         <receiver
             android:name=".domain.ReminderActionReceiver"

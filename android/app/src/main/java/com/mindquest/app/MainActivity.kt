@@ -43,9 +43,9 @@ private enum class AppState { Loading, Onboarding, Locked, Ready }
 private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
     Inbox("Inbox", "📥"),
+    Goals("Goals", "🎯"),
     Quests("Quests", "⚔️"),
     Habits("Missions", "🔥"),
-    Goals("Story Arcs", "📖"),
     Archives("Archives", "📜"),
     Narrator("Narrator", "🔮"),
     WorldMap("World Map", "🗺️"),
@@ -160,6 +160,7 @@ private suspend fun startUp(repo: MindQuestRepository, context: Context) {
     // its records were cleared, and is a no-op when everything is already scheduled.
     repo.rearmHabitReminders()
     repo.rearmNoteReminders()
+    repo.rearmGoalCheckins()
     Backup.ensureScheduled(context)
 }
 

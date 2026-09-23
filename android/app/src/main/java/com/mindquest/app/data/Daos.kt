@@ -135,6 +135,32 @@ interface GoalDao {
 
     @Query("SELECT * FROM milestones")
     suspend fun allMilestones(): List<MilestoneEntity>
+
+    @Query("DELETE FROM goals WHERE id = :id")
+    suspend fun deleteGoal(id: String)
+
+    @Query("DELETE FROM milestones WHERE goalId = :goalId")
+    suspend fun deleteMilestonesOf(goalId: String)
+
+    // ---- progress readings for target goals ----
+
+    @Upsert
+    suspend fun upsertProgress(entry: GoalProgressEntity)
+
+    @Query("SELECT * FROM goal_progress ORDER BY createdAt")
+    fun observeAllProgress(): Flow<List<GoalProgressEntity>>
+
+    @Query("SELECT * FROM goal_progress WHERE goalId = :goalId ORDER BY createdAt")
+    suspend fun progressOf(goalId: String): List<GoalProgressEntity>
+
+    @Query("DELETE FROM goal_progress WHERE id = :id")
+    suspend fun deleteProgress(id: String)
+
+    @Query("DELETE FROM goal_progress WHERE goalId = :goalId")
+    suspend fun deleteProgressOf(goalId: String)
+
+    @Query("SELECT * FROM goal_progress")
+    suspend fun allProgress(): List<GoalProgressEntity>
 }
 
 @Dao

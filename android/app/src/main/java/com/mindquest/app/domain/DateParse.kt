@@ -38,7 +38,7 @@ object DateParse {
         Regex("""\b(every\s+year|yearly|annually)\b""") to "yearly",
     )
 
-    private val MONTHS = mapOf(
+    internal val MONTHS = mapOf(
         "january" to 1, "jan" to 1, "february" to 2, "feb" to 2, "march" to 3, "mar" to 3,
         "april" to 4, "apr" to 4, "may" to 5, "june" to 6, "jun" to 6, "july" to 7, "jul" to 7,
         "august" to 8, "aug" to 8, "september" to 9, "sept" to 9, "sep" to 9,
@@ -105,17 +105,24 @@ object DateParse {
         // --- "21st September" / "September 21" ---
         // Every match is tried, not just the first: "buy 2 kg sugar by 21st September" starts
         // with a number that isn't a date, and stopping there would lose the date entirely.
-        Regex("""\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)\b""").findAll(lower)
+        // An explicit year ("21st March 2028") is taken as given rather than guessed.
+        Regex("""\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)\b(?:\s*,?\s*(\d{4})\b)?""").findAll(lower)
             .firstOrNull { MONTHS.containsKey(it.groupValues[2]) }?.let { m ->
                 val month = MONTHS.getValue(m.groupValues[2])
-                date = safeDate(now.toLocalDate(), month, m.groupValues[1].toInt())
+                val day = m.groupValues[1].toInt()
+                date = m.groupValues[3].toIntOrNull()
+                    ?.let { year -> runCatching { LocalDate.of(year, month, day) }.getOrNull() }
+                    ?: safeDate(now.toLocalDate(), month, day)
                 if (date != null) cut += m.range
             }
         if (date == null) {
-            Regex("""\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b""").findAll(lower)
+            Regex("""\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:\s*,?\s*(\d{4})\b)?""").findAll(lower)
                 .firstOrNull { MONTHS.containsKey(it.groupValues[1]) }?.let { m ->
                     val month = MONTHS.getValue(m.groupValues[1])
-                    date = safeDate(now.toLocalDate(), month, m.groupValues[2].toInt())
+                    val day = m.groupValues[2].toInt()
+                    date = m.groupValues[3].toIntOrNull()
+                        ?.let { year -> runCatching { LocalDate.of(year, month, day) }.getOrNull() }
+                        ?: safeDate(now.toLocalDate(), month, day)
                     if (date != null) cut += m.range
                 }
         }

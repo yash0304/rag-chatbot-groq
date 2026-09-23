@@ -10,8 +10,6 @@ import android.os.Parcelable
 import android.widget.Toast
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.PhotoStore
-import com.mindquest.app.domain.Cadences
-import com.mindquest.app.domain.Categories
 import com.mindquest.app.widget.TodayWidget
 import java.io.File
 import java.text.SimpleDateFormat
@@ -87,10 +85,7 @@ class ShareReceiverActivity : Activity() {
 
     private suspend fun saveText(repo: MindQuestRepository, text: String): String {
         val r = repo.captureNote(text)
-        val where = Categories.of(r.category).label
-        val due = r.dueAt?.let { " · ⏰ ${stamp.format(Date(it))}" } ?: ""
-        val repeat = r.repeat?.let { " · 🔁 ${Cadences.of(it).label}" } ?: ""
-        return "Saved to Inbox → $where$due$repeat"
+        return "Saved: " + r.describe { stamp.format(Date(it)) }
     }
 
     private suspend fun savePhotos(repo: MindQuestRepository, uris: List<Uri>, caption: String): String {

@@ -28,8 +28,9 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         FolderEntity::class,
         AttachmentEntity::class,
         NoteVectorEntity::class,
+        GoalProgressEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -96,6 +97,27 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /**
+         * v11→v12: goals can be targets — a number by a date — with a history of readings and
+         * a check-in nudge. Additive: existing story arcs are untouched, new columns are null.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `targetValue` REAL")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `changeValue` REAL")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `unit` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `deadline` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `checkinMinuteOfDay` INTEGER")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `checkinCadence` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `updatedAt` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `goal_progress` (`id` TEXT NOT NULL, `goalId` TEXT NOT NULL, " +
+                        "`value` REAL NOT NULL, `note` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_goal_progress_goalId` ON `goal_progress` (`goalId`)")
             }
         }
 
@@ -196,7 +218,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
             return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
                 // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                 // as a last resort on downgrade, which shouldn't happen in normal use.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
                 .build()

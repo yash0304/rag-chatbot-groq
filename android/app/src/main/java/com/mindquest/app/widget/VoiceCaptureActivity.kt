@@ -6,8 +6,6 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.widget.Toast
 import com.mindquest.app.data.MindQuestRepository
-import com.mindquest.app.domain.Cadences
-import com.mindquest.app.domain.Categories
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,12 +55,9 @@ class VoiceCaptureActivity : Activity() {
                 if (result == null) {
                     toast("Couldn't save that.")
                 } else {
-                    // Say back what was understood, including the date, so a misheard word or
-                    // a wrongly-read date is caught now rather than discovered next week.
-                    val where = Categories.of(result.category).label
-                    val due = result.dueAt?.let { " · ${dueFmt.format(Date(it))}" } ?: ""
-                    val repeat = result.repeat?.let { " · 🔁 ${Cadences.of(it).label}" } ?: ""
-                    toast("${result.text} → $where$due$repeat")
+                    // Say back what was understood and where it went, so a misheard word or a
+                    // wrongly-read date is caught now rather than discovered next week.
+                    toast(result.describe { dueFmt.format(Date(it)) })
                 }
                 TodayWidget.refresh(applicationContext)
                 finish()
