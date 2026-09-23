@@ -1,5 +1,6 @@
 package com.mindquest.app
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -16,7 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import com.mindquest.app.data.Backup
+import com.mindquest.app.data.DbEncryption
 import com.mindquest.app.data.GlobalKind
+import com.mindquest.app.data.MindQuestDatabase
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.ui.*
 import kotlinx.coroutines.launch
@@ -39,9 +43,9 @@ private enum class AppState { Loading, Onboarding, Locked, Ready }
 private enum class Dest(val label: String, val icon: String) {
     Dashboard("Dashboard", "🏰"),
     Inbox("Inbox", "📥"),
+    Goals("Goals", "🎯"),
     Quests("Quests", "⚔️"),
     Habits("Missions", "🔥"),
-    Goals("Story Arcs", "📖"),
     Archives("Archives", "📜"),
     Narrator("Narrator", "🔮"),
     WorldMap("World Map", "🗺️"),
@@ -57,22 +61,37 @@ private enum class Dest(val label: String, val icon: String) {
 @Composable
 fun MindQuestApp() {
     val context = LocalContext.current
-    val repo = remember { MindQuestRepository(context.applicationContext) }
+    // Opening the data can fail in exactly one serious way: an encrypted file whose key the
+    // phone no longer has. Catch it here and explain, rather than crash on every launch.
+    val opened = remember { runCatching { MindQuestRepository(context.applicationContext) } }
+    val repo = opened.getOrNull()
+    if (repo == null) {
+        CannotOpenScreen(opened.exceptionOrNull())
+        return
+    }
     var state by remember { mutableStateOf(AppState.Loading) }
+    var startupError by remember { mutableStateOf<Throwable?>(null) }
 
     LaunchedEffect(Unit) {
-        repo.seedIfEmpty()
-        // Give a category to anything captured before categories existed. Cheap keyword
-        // work, and it never overwrites a category the user has already set.
-        repo.backfillCategories()
-        // WorkManager keeps periodic work across reboots itself; this repairs the case where
-        // its records were cleared, and is a no-op when everything is already scheduled.
-        repo.rearmHabitReminders()
+        try {
+            startUp(repo, context.applicationContext)
+        } catch (e: Exception) {
+            startupError = e
+            return@LaunchedEffect
+        }
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked
             else -> AppState.Ready
         }
+        // After the app is on screen, not before: embedding every note the first time after
+        // an update can take a few seconds, and nobody should wait for it to open the app.
+        launch { runCatching { repo.indexNotes() } }
+    }
+
+    startupError?.let {
+        CannotOpenScreen(it)
+        return
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -83,6 +102,66 @@ fun MindQuestApp() {
             AppState.Ready -> HomeShell(repo)
         }
     }
+}
+
+/**
+ * Shown only if the data can't be opened. Nothing here deletes anything: the one action
+ * renames the unreadable file and keeps it, so the app can start empty and a backup can be
+ * restored into it.
+ */
+@Composable
+private fun CannotOpenScreen(error: Throwable?) {
+    val context = LocalContext.current
+    var confirm by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Your data couldn't be opened", style = MaterialTheme.typography.headlineSmall, color = Ember)
+        Spacer(Modifier.height(8.dp))
+        Text(error?.message ?: "Unknown error", style = MaterialTheme.typography.bodySmall, color = Muted)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Nothing has been deleted. First try opening the app again. If this keeps happening, " +
+                "set the unreadable file aside — it is kept, renamed, not erased — and start " +
+                "fresh, then restore your latest backup from the Backup screen. Weekly backups " +
+                "are in the folder you chose for them.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = { restartApp(context) }, modifier = Modifier.fillMaxWidth()) { Text("Try again") }
+        OutlinedButton(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Set it aside & start fresh")
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Start fresh?") },
+            text = { Text("The app will open empty. Go to Backup → Restore to bring your data back from a backup.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    DbEncryption.setAside(context, context.getDatabasePath(MindQuestDatabase.NAME))
+                    restartApp(context)
+                }) { Text("Set aside & restart") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** Everything that runs once at launch, before the first screen is shown. */
+private suspend fun startUp(repo: MindQuestRepository, context: Context) {
+    repo.seedIfEmpty()
+    // Give a category to anything captured before categories existed. Cheap keyword
+    // work, and it never overwrites a category the user has already set.
+    repo.backfillCategories()
+    // WorkManager keeps pending work across reboots itself; this repairs the case where
+    // its records were cleared, and is a no-op when everything is already scheduled.
+    repo.rearmHabitReminders()
+    repo.rearmNoteReminders()
+    repo.rearmGoalCheckins()
+    Backup.ensureScheduled(context)
 }
 
 @Composable
@@ -141,6 +220,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                         GlobalKind.Quest -> Dest.Quests
                         GlobalKind.Habit -> Dest.Habits
                         GlobalKind.Goal -> Dest.Goals
+                        GlobalKind.Folder -> Dest.Inbox
                     },
                 )
             },

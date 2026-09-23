@@ -8,8 +8,12 @@ import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Catalogs
 import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.DateParse
+import com.mindquest.app.domain.FolderMatch
 import com.mindquest.app.domain.Embeddings
 import com.mindquest.app.domain.GameEngine
+import com.mindquest.app.domain.GoalCheckins
+import com.mindquest.app.domain.GoalMath
+import com.mindquest.app.domain.GoalParse
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
 import com.mindquest.app.domain.Embedders
@@ -81,7 +85,35 @@ data class CaptureResult(
     val dueAt: Long?,
     val category: String,
     val folderId: String?,
-)
+    val repeat: String? = null,
+    /** The folder's name when the line was filed into one of the user's own folders. */
+    val folderName: String? = null,
+    /** Set when the line was a goal and went to Goals instead of the Inbox. */
+    val goal: GoalParse.Goal? = null,
+    /** Set when the line was a checkpoint and was added to the goal named [checkpointOf]. */
+    val checkpoint: GoalParse.Checkpoint? = null,
+    val checkpointOf: String? = null,
+    val checkpointMet: Boolean = false,
+) {
+    /** One line saying where it went — for the toast after the mic, the widget or Share. */
+    fun describe(stamp: (Long) -> String): String {
+        checkpoint?.let { cp ->
+            val date = cp.date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
+            return "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by $date → $checkpointOf" +
+                if (checkpointMet) " · already there ✓" else ""
+        }
+        goal?.let {
+            return "🎯 ${it.title} by ${Cadences.formatTarget(it.deadline.toString())} → Goals · check-in on the 1st"
+        }
+        return buildString {
+            append(text)
+            append(" → ")
+            append(folderName?.let { "🗂 $it" } ?: Categories.of(category).label)
+            dueAt?.let { append(" · ⏰ ${stamp(it)}") }
+            repeat?.let { append(" · 🔁 ${Cadences.of(it).label}") }
+        }
+    }
+}
 
 /** One line on the home-screen widget. Carries its id so the row can be ticked off there. */
 data class AgendaItem(
@@ -99,7 +131,8 @@ enum class GlobalKind(val label: String, val icon: String) {
     Document("Archives", "📜"),
     Quest("Quests", "⚔️"),
     Habit("Missions", "🔥"),
-    Goal("Story Arcs", "📖"),
+    Goal("Goals", "🎯"),
+    Folder("Inbox folder", "🗂"),
 }
 
 data class GlobalHit(
@@ -153,6 +186,10 @@ data class ExportBundle(
      * rebuild the trail after a reinstall-in-place, honestly useless after a phone change.
      */
     val attachments: List<AttachmentEntity> = emptyList(),
+    /** Readings against target goals — the weigh-ins, the savings totals. */
+    val goalProgress: List<GoalProgressEntity> = emptyList(),
+    /** Mini goals inside target goals, planned and hand-set. */
+    val goalCheckpoints: List<GoalCheckpointEntity> = emptyList(),
 )
 
 /**
@@ -173,6 +210,7 @@ class MindQuestRepository(private val context: Context) {
     private val noteDao = db.noteDao()
     private val folderDao = db.folderDao()
     private val attachmentDao = db.attachmentDao()
+    private val noteVectorDao = db.noteVectorDao()
     private val json = Json { ignoreUnknownKeys = true }
 
     // Resolved on first use: the MiniLM model if its assets shipped, else hashing vectors.
@@ -396,6 +434,21 @@ class MindQuestRepository(private val context: Context) {
      * the case where the chain was broken (app data wiped, a restore from backup, a firing
      * that never happened) and costs nothing when everything is already scheduled.
      */
+    /**
+     * Re-arm every note reminder that is still ahead of us. Only future ones are touched:
+     * a reminder already past its time may be partway through its repeat-until-done chain,
+     * and cancelling that to reschedule would silence a nag that is currently working.
+     */
+    suspend fun rearmNoteReminders() = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        noteDao.allNotes()
+            .filter { !it.done && (it.remindAt ?: 0L) > now }
+            .forEach { note ->
+                Reminders.cancel(context, note.id)
+                Reminders.schedule(context, note.id, note.text, note.remindAt!!)
+            }
+    }
+
     suspend fun rearmHabitReminders() = withContext(Dispatchers.IO) {
         habitDao.allHabits().forEach { habit ->
             habit.remindMinuteOfDay?.let {
@@ -456,6 +509,218 @@ class MindQuestRepository(private val context: Context) {
 
     fun observeGoals(): Flow<List<GoalEntity>> = goalDao.observeGoals()
     fun observeAllMilestones(): Flow<List<MilestoneEntity>> = goalDao.observeAllMilestones()
+    fun observeGoalProgress(): Flow<List<GoalProgressEntity>> = goalDao.observeAllProgress()
+
+    suspend fun goal(id: String): GoalEntity? = goalDao.getGoal(id)
+    suspend fun goalProgress(id: String): List<GoalProgressEntity> = goalDao.progressOf(id)
+
+    /**
+     * Create a target goal — "80 kg by March 2027" — with a check-in nudge on the 1st of each
+     * month at 9:00 unless told otherwise. The nudge is on by default because a goal you are
+     * never asked about is a goal you forget you set.
+     */
+    suspend fun createTargetGoal(
+        goal: GoalParse.Goal,
+        narrative: String?,
+        checkinMinute: Int? = DEFAULT_CHECKIN_MINUTE,
+    ): String {
+        val id = UUID.randomUUID().toString()
+        goalDao.upsertGoal(
+            GoalEntity(
+                id = id,
+                title = goal.title,
+                narrative = narrative?.trim()?.takeIf { it.isNotBlank() && it != goal.title },
+                targetValue = goal.target,
+                changeValue = goal.change,
+                unit = goal.unit,
+                deadline = goal.deadline.toString(),
+                checkinMinuteOfDay = checkinMinute,
+            ),
+        )
+        checkinMinute?.let { GoalCheckins.schedule(context, id, it, "monthly") }
+        return id
+    }
+
+    data class GoalLogResult(
+        val xpAwarded: Int = 0,
+        val reached: Boolean = false,
+        val levelUp: Boolean = false,
+        val status: GoalMath.Status? = null,
+        /** Checkpoints this reading got to for the first time. */
+        val checkpointsHit: List<GoalCheckpointEntity> = emptyList(),
+    )
+
+    /**
+     * Record a reading. The first reading of a "lose 10 kg" goal is what fixes its target —
+     * until you weigh in, ten kilos from what isn't known. Crossing the target completes the
+     * goal, pays the goal bonus, and stops the check-ins.
+     */
+    suspend fun logGoalProgress(goalId: String, value: Double, note: String? = null): GoalLogResult =
+        db.withTransaction {
+            val original = goalDao.getGoal(goalId) ?: return@withTransaction GoalLogResult()
+            val change = original.changeValue
+            val goal = if (original.targetValue == null && change != null) {
+                original.copy(targetValue = value + change, changeValue = null)
+            } else {
+                original
+            }
+            if (goal != original) goalDao.upsertGoal(goal)
+            goalDao.upsertProgress(
+                GoalProgressEntity(
+                    id = UUID.randomUUID().toString(), goalId = goalId, value = value,
+                    note = note?.trim()?.takeIf { it.isNotBlank() },
+                ),
+            )
+            val readings = goalDao.progressOf(goalId).map { it.value }
+            val deadline = goal.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?: LocalDate.now()
+            val status = GoalMath.status(goal.targetValue, goal.unit ?: "", deadline, readings)
+
+            var xp = 0
+            var levelUp = false
+            award("goal_checkin", GOAL_CHECKIN_XP, refId = goalId).let { xp += it.xpAwarded; levelUp = it.levelUp }
+            val hit = scoreCheckpoints(goal, value)
+            xp += hit.size * Catalogs.Xp.MILESTONE
+            val reached = status.reached && goal.status == "active"
+            if (reached) {
+                goalDao.upsertGoal(goal.copy(status = "completed"))
+                GoalCheckins.cancel(context, goalId)
+                award("goal_completed", Catalogs.Xp.GOAL_BONUS, refId = goalId).let {
+                    xp += it.xpAwarded; levelUp = levelUp || it.levelUp
+                }
+            }
+            GoalLogResult(xp, reached, levelUp, status, hit)
+        }
+
+    suspend fun deleteGoalProgress(entryId: String) = goalDao.deleteProgress(entryId)
+
+    // ---------- checkpoints: mini goals inside a target goal ----------
+
+    fun observeCheckpoints(): Flow<List<GoalCheckpointEntity>> = goalDao.observeAllCheckpoints()
+    suspend fun checkpointsOf(goalId: String): List<GoalCheckpointEntity> = goalDao.checkpointsOf(goalId)
+
+    /** Direction and start of a goal, worked out from its readings so far. */
+    private suspend fun directionOf(goal: GoalEntity, reference: Double? = null): Boolean {
+        val start = if (GoalParse.accumulates(goal.unit ?: "")) 0.0 else goalDao.progressOf(goal.id).firstOrNull()?.value
+        val target = goal.targetValue ?: return (goal.changeValue ?: 0.0) < 0
+        return GoalMath.goesDown(goal.unit ?: "", start, target, reference)
+    }
+
+    /**
+     * Add a mini goal by hand — "90 kg by 1 October". If the latest reading already gets
+     * there it is marked reached straight away (without XP: there's nothing to reward in
+     * setting a bar you've already cleared).
+     */
+    suspend fun addCheckpoint(goalId: String, value: Double, due: LocalDate): Boolean {
+        val goal = goalDao.getGoal(goalId) ?: return false
+        val latest = goalDao.progressOf(goalId).lastOrNull()?.value
+        val already = latest != null && GoalMath.crosses(value, latest, directionOf(goal, reference = value))
+        goalDao.upsertCheckpoint(
+            GoalCheckpointEntity(
+                id = UUID.randomUUID().toString(), goalId = goalId, value = value,
+                dueDate = due.toString(), planned = false,
+                reachedAt = if (already) System.currentTimeMillis() else null,
+            ),
+        )
+        return already
+    }
+
+    suspend fun deleteCheckpoint(id: String) = goalDao.deleteCheckpoint(id)
+
+    /**
+     * Split a goal into steps: a checkpoint every week, half-month or month on a straight
+     * line from today's reading to the target. Redoing it replaces the plan's open steps and
+     * leaves your own checkpoints alone. The check-in moves to the same rhythm — weekly steps
+     * want a weekly look — and is switched on if it was off. Returns the number of steps, or
+     * null when there is no reading yet to start the line from.
+     */
+    suspend fun planCheckpoints(goalId: String, cadence: String): Int? = db.withTransaction {
+        val goal = goalDao.getGoal(goalId) ?: return@withTransaction null
+        val target = goal.targetValue ?: return@withTransaction null
+        val deadline = goal.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: return@withTransaction null
+        val unit = goal.unit ?: ""
+        val start = goalDao.progressOf(goalId).lastOrNull()?.value
+            ?: if (GoalParse.accumulates(unit)) 0.0 else return@withTransaction null
+        goalDao.deleteOpenPlannedOf(goalId)
+        val steps = GoalMath.plan(start, target, unit, LocalDate.now(), deadline, cadence)
+        steps.forEach { (date, value) ->
+            goalDao.upsertCheckpoint(
+                GoalCheckpointEntity(
+                    id = UUID.randomUUID().toString(), goalId = goalId, value = value,
+                    dueDate = date.toString(), planned = true,
+                ),
+            )
+        }
+        setGoalCheckin(goalId, goal.checkinMinuteOfDay ?: DEFAULT_CHECKIN_MINUTE, cadence)
+        steps.size
+    }
+
+    suspend fun clearPlan(goalId: String) = goalDao.deleteOpenPlannedOf(goalId)
+
+    /**
+     * After a reading: stamp every open checkpoint it gets to, and pay for each once. Only
+     * checkpoints still in date count — reaching October's number in November is progress,
+     * and the main goal will reward it, but it isn't hitting the checkpoint.
+     */
+    private suspend fun scoreCheckpoints(goal: GoalEntity, value: Double): List<GoalCheckpointEntity> {
+        val today = LocalDate.now()
+        val down = directionOf(goal)
+        val hit = goalDao.checkpointsOf(goal.id).filter { cp ->
+            cp.reachedAt == null &&
+                !LocalDate.parse(cp.dueDate).isBefore(today) &&
+                GoalMath.crosses(cp.value, value, down)
+        }
+        hit.forEach { cp ->
+            goalDao.upsertCheckpoint(cp.copy(reachedAt = System.currentTimeMillis()))
+            award("checkpoint_hit", Catalogs.Xp.MILESTONE, refId = cp.id)
+        }
+        return hit
+    }
+
+    /** Change a target goal's name, target, unit or deadline. */
+    suspend fun editTargetGoal(id: String, title: String, target: Double?, unit: String, deadline: String?) {
+        val goal = goalDao.getGoal(id) ?: return
+        goalDao.upsertGoal(
+            goal.copy(
+                title = title.trim().ifBlank { goal.title },
+                targetValue = target ?: goal.targetValue,
+                // An explicit target replaces a pending "lose 10 kg" change.
+                changeValue = if (target != null) null else goal.changeValue,
+                unit = unit.trim().ifBlank { goal.unit },
+                deadline = deadline ?: goal.deadline,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /** Set or clear the check-in nudge, and how often it comes round. */
+    suspend fun setGoalCheckin(id: String, minuteOfDay: Int?, cadence: String? = null) {
+        val goal = goalDao.getGoal(id) ?: return
+        val updated = goal.copy(checkinMinuteOfDay = minuteOfDay, checkinCadence = cadence ?: goal.checkinCadence)
+        goalDao.upsertGoal(updated)
+        if (minuteOfDay == null || updated.status != "active") {
+            GoalCheckins.cancel(context, id)
+        } else {
+            GoalCheckins.schedule(context, id, minuteOfDay, updated.cadence)
+        }
+    }
+
+    suspend fun deleteGoal(id: String) = db.withTransaction {
+        GoalCheckins.cancel(context, id)
+        attachmentDao.of("goal", id).forEach { PhotoStore.delete(it.path) }
+        attachmentDao.deleteAllOf("goal", id)
+        goalDao.deleteProgressOf(id)
+        goalDao.deleteCheckpointsOf(id)
+        goalDao.deleteMilestonesOf(id)
+        goalDao.deleteGoal(id)
+    }
+
+    suspend fun rearmGoalCheckins() = withContext(Dispatchers.IO) {
+        goalDao.allGoals()
+            .filter { it.status == "active" && it.isTarget }
+            .forEach { g -> g.checkinMinuteOfDay?.let { GoalCheckins.schedule(context, g.id, it, g.cadence) } }
+    }
 
     suspend fun createGoal(title: String, narrative: String?, milestones: List<String>) = db.withTransaction {
         val goalId = UUID.randomUUID().toString()
@@ -574,6 +839,9 @@ class MindQuestRepository(private val context: Context) {
 
     fun observeDocuments(): Flow<List<DocumentEntity>> = documentDao.observeDocuments()
 
+    /** The display name of a content URI, e.g. "ticket.pdf". Public for the share handler. */
+    fun displayName(uri: Uri): String = resolveName(uri)
+
     private fun resolveName(uri: Uri): String {
         var name = "document"
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
@@ -585,11 +853,15 @@ class MindQuestRepository(private val context: Context) {
         return name
     }
 
-    /** Import + process a picked file fully offline; returns the document id. */
-    suspend fun importDocument(uri: Uri): String {
+    /**
+     * Import + process a picked file fully offline; returns the document id. [nameOverride]
+     * and [mimeOverride] are for a file shared in from another app and copied locally first,
+     * where the copy no longer knows what it was called or what it is.
+     */
+    suspend fun importDocument(uri: Uri, nameOverride: String? = null, mimeOverride: String? = null): String {
         val id = UUID.randomUUID().toString()
-        val name = resolveName(uri)
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val name = nameOverride ?: resolveName(uri)
+        val mime = mimeOverride ?: context.contentResolver.getType(uri) ?: "application/octet-stream"
         documentDao.upsertDocument(DocumentEntity(id = id, title = name, filename = name, mimeType = mime, status = "processing"))
         award("document_uploaded", Catalogs.Xp.DOCUMENT_UPLOADED, refId = id)
         try {
@@ -907,6 +1179,8 @@ class MindQuestRepository(private val context: Context) {
         notes = noteDao.allNotes(),
         folders = folderDao.all(),
         attachments = attachmentDao.allAttachments(),
+        goalProgress = goalDao.allProgress(),
+        goalCheckpoints = goalDao.allCheckpoints(),
     )
 
     suspend fun exportJson(): String {
@@ -938,8 +1212,13 @@ class MindQuestRepository(private val context: Context) {
     }
 
     /** Replace all on-device data with an imported bundle. Returns items restored. */
-    suspend fun importJson(jsonStr: String): Int {
-        val bundle = json.decodeFromString<ExportBundle>(jsonStr)
+    suspend fun importJson(jsonStr: String): Int = importBundle(decodeBundle(jsonStr))
+
+    fun decodeBundle(jsonStr: String): ExportBundle = json.decodeFromString<ExportBundle>(jsonStr)
+
+    fun encodeBundle(bundle: ExportBundle): String = json.encodeToString(bundle)
+
+    suspend fun importBundle(bundle: ExportBundle): Int {
         withContext(Dispatchers.IO) { db.clearAllTables() }
         bundle.profile?.let { profileDao.upsert(it) }
         bundle.xpEvents.forEach { xpDao.insert(it) }
@@ -956,7 +1235,19 @@ class MindQuestRepository(private val context: Context) {
         bundle.chat.forEach { chatDao.insert(it) }
         bundle.reviews.forEach { reviewDao.upsert(it) }
         bundle.notes.forEach { noteDao.upsert(it) }
+        // Every table cleared above has to be refilled here. Folders and photo records were
+        // once added to the export without being added to this list, which meant restoring
+        // your own backup quietly deleted every folder you had made.
+        bundle.folders.forEach { folderDao.upsert(it) }
+        bundle.attachments.forEach { attachmentDao.upsert(it) }
+        bundle.goalProgress.forEach { goalDao.upsertProgress(it) }
+        bundle.goalCheckpoints.forEach { goalDao.upsertCheckpoint(it) }
         seedIfEmpty() // restore catalog rows if the bundle predates them
+        // Restored rows carry their reminder times, but the alarms themselves lived in
+        // WorkManager, which a restore onto a new phone starts without. Rebuild them.
+        rearmNoteReminders()
+        rearmHabitReminders()
+        rearmGoalCheckins()
         return bundle.xpEvents.size + bundle.quests.size + bundle.habits.size +
             bundle.goals.size + bundle.documents.size
     }
@@ -973,6 +1264,7 @@ class MindQuestRepository(private val context: Context) {
         remindAt: Long? = null,
         category: String? = null,
         categoryChosen: Boolean = false,
+        repeat: String? = null,
     ): String {
         val id = UUID.randomUUID().toString()
         val body = text.trim()
@@ -982,6 +1274,7 @@ class MindQuestRepository(private val context: Context) {
                 category = category ?: Categories.classify(body),
                 // Confirmed at capture, so nothing downstream may second-guess it.
                 categoryLocked = categoryChosen,
+                repeat = repeat?.takeIf { remindAt != null },
             ),
         )
         if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
@@ -989,10 +1282,47 @@ class MindQuestRepository(private val context: Context) {
         return id
     }
 
-    suspend fun setNoteDone(id: String, done: Boolean) {
-        val note = noteDao.get(id) ?: return
+    /**
+     * Tick a note off, or untick it. A repeating note is never left ticked: it rolls its
+     * reminder forward to the next date and stays open, so the Inbox, the widget and the
+     * notification's Done button — which all come through here — treat "rent on the 5th"
+     * the same way. Returns the next reminder time when it rolled, so callers can say so.
+     */
+    suspend fun setNoteDone(id: String, done: Boolean): Long? {
+        val note = noteDao.get(id) ?: return null
+        val repeat = note.repeat
+        val due = note.remindAt
+        if (done && repeat != null && due != null) {
+            val next = Cadences.nextOccurrence(repeat, due)
+            noteDao.upsert(note.copy(done = false, remindAt = next))
+            Reminders.cancel(context, id)
+            Reminders.schedule(context, id, note.text, next)
+            TodayWidget.refresh(context)
+            return next
+        }
         noteDao.upsert(note.copy(done = done))
         if (done) Reminders.cancel(context, id) // no point nagging about a finished errand
+        TodayWidget.refresh(context)
+        return null
+    }
+
+    /** Make a note's reminder repeat, or stop it repeating. Needs a reminder to repeat. */
+    suspend fun setNoteRepeat(id: String, repeat: String?) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(repeat = repeat, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * Push a reminder back from the notification itself. The new time is written onto the
+     * note, so the Inbox and the widget show when it will come back rather than the time
+     * it was originally due. Not stamped as an edit — the note says the same thing.
+     */
+    suspend fun snoozeNote(id: String, minutes: Long) {
+        val note = noteDao.get(id) ?: return
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        noteDao.upsert(note.copy(remindAt = at))
+        Reminders.cancel(context, id)
+        Reminders.schedule(context, id, note.text, at)
         TodayWidget.refresh(context)
     }
 
@@ -1012,10 +1342,18 @@ class MindQuestRepository(private val context: Context) {
      * hasn't changed: the pending work carries the old wording as a fallback, so editing the
      * words without re-scheduling would leave a reminder that fires saying the wrong thing.
      */
-    suspend fun editNote(id: String, text: String, remindAt: Long?) {
+    suspend fun editNote(id: String, text: String, remindAt: Long?, repeat: String?) {
         val note = noteDao.get(id) ?: return
         val body = text.trim().ifBlank { note.text }
-        noteDao.upsert(note.copy(text = body, remindAt = remindAt, updatedAt = System.currentTimeMillis()))
+        noteDao.upsert(
+            note.copy(
+                text = body,
+                remindAt = remindAt,
+                // Nothing to repeat without a time to repeat from.
+                repeat = if (remindAt == null) null else repeat,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
         Reminders.cancel(context, id)
         if (remindAt != null) Reminders.schedule(context, id, body, remindAt)
         TodayWidget.refresh(context)
@@ -1023,6 +1361,7 @@ class MindQuestRepository(private val context: Context) {
 
     suspend fun deleteNote(id: String) {
         Reminders.cancel(context, id)
+        noteVectorDao.delete(id)
         attachmentDao.of("note", id).forEach { PhotoStore.delete(it.path) }
         attachmentDao.deleteAllOf("note", id)
         noteDao.delete(id)
@@ -1218,26 +1557,67 @@ class MindQuestRepository(private val context: Context) {
         }
 
     /**
-     * The one capture path: take a sentence as spoken or typed, pull the date out of it, and
-     * file it. Used by the Inbox composer, the mic on every screen, and the home-screen
-     * capture widget, so a note made by voice is identical to one made by thumb.
+     * The one capture path: take a sentence as spoken, typed or shared, and put it where it
+     * belongs. Used by the Inbox mic, the home-screen mic widget and Share, so a line said
+     * aloud lands exactly where the same line typed would.
+     *
+     *  - A goal — a number by a date, "80 kg by March 2027" — goes to Goals, with a monthly
+     *    check-in, because a note can't track progress or ask how it's going.
+     *  - Anything else is an Inbox note: its date becomes a reminder, and it is filed into
+     *    one of your own folders when it shares a word with the folder's name ("vegetables"
+     *    → "Tuesday vegetable market"), otherwise under its category.
+     *
+     * Inside a folder you opened yourself, the folder wins: you chose where it goes.
      */
     suspend fun captureNote(
         spoken: String,
         folderId: String? = null,
         category: String? = null,
     ): CaptureResult {
+        if (folderId == null) {
+            // A level by a date, in the unit of a goal already running, is a checkpoint on
+            // the way to it — "90 kg by 1st October" inside "80 kg by March 2027" — not a
+            // second goal and not an errand. Checked before goals for exactly that reason.
+            GoalParse.checkpoint(spoken)?.let { cp ->
+                goalForCheckpoint(cp, goalDao.allGoals())?.let { main ->
+                    val met = addCheckpoint(main.id, cp.value, cp.date)
+                    return CaptureResult(
+                        main.id, GoalParse.format(cp.value, cp.unit), null, "general", null,
+                        checkpoint = cp, checkpointOf = main.title, checkpointMet = met,
+                    )
+                }
+            }
+            GoalParse.detect(spoken)?.let { goal ->
+                val id = createTargetGoal(goal, narrative = spoken)
+                return CaptureResult(id, goal.title, null, "general", null, goal = goal)
+            }
+        }
         val parsed = DateParse.parse(spoken)
         val text = parsed.text.ifBlank { spoken.trim() }
         val chosen = category ?: Categories.classify(text)
+        // Only when no folder or category was chosen for it: a choice always beats a guess.
+        val folder = when {
+            folderId != null -> folderDao.all().firstOrNull { it.id == folderId }
+            category != null -> null
+            else -> bestFolderFor(text)
+        }
+        // "Pay rent on the 5th every month" — the repeat only means something with a date.
+        val repeat = parsed.repeat?.takeIf { parsed.dueAt != null }
         val id = addNote(
             text = text,
             remindAt = parsed.dueAt,
             category = chosen,
             categoryChosen = category != null || folderId != null,
+            repeat = repeat,
         )
-        if (folderId != null) setNoteFolder(id, folderId)
-        return CaptureResult(id, text, parsed.dueAt, chosen, folderId)
+        if (folder != null) setNoteFolder(id, folder.id)
+        return CaptureResult(id, text, parsed.dueAt, chosen, folder?.id, repeat, folderName = folder?.name)
+    }
+
+    /** The user folder a line belongs in, if it shares a word with the folder's name. */
+    suspend fun bestFolderFor(text: String): FolderEntity? {
+        val folders = folderDao.all()
+        return FolderMatch.best(text, folders.map { it.name })?.let { folders[it] }
     }
 
     /** Open note counts per category, for the Inbox folders. */
@@ -1291,7 +1671,8 @@ class MindQuestRepository(private val context: Context) {
      * Search everything at once — notes, archives, quests, missions and arcs — so a half
      * remembered thing can be found without first knowing which screen it lives on.
      *
-     * Archives go through the full semantic pipeline. The rest are short titles where a
+     * Archives and notes are matched on meaning as well as words — notes are where the
+     * half-remembered things live. Quests, missions and arcs are short titles where a
      * substring match is both sufficient and predictable; running a transformer over a
      * dozen quest titles would cost more than it could possibly add.
      */
@@ -1302,18 +1683,47 @@ class MindQuestRepository(private val context: Context) {
             val needle = q.lowercase()
             val hits = mutableListOf<GlobalHit>()
 
-            noteDao.allNotes()
-                .filter { needle in it.text.lowercase() }
-                .sortedByDescending { it.createdAt }
+            // Notes: every word you typed, or close enough in meaning. The words are matched
+            // separately rather than as one phrase, so "dhaba colaba" finds "Gokul Dhaba,
+            // Colaba" even though the comma breaks the phrase.
+            val notes = noteDao.allNotes()
+            indexNotes(notes)
+            val semantic = embedder !== HashingEmbedder
+            val queryVector = if (semantic) embedder.embed(q) else null
+            val vectors = if (semantic) noteVectorDao.all().associateBy { it.noteId } else emptyMap()
+            val words = needle.split(Regex("""\s+""")).filter { it.length >= 2 }
+            val folderNames = folderDao.all().associate { it.id to it.name }
+
+            notes
+                .mapNotNull { note ->
+                    val text = note.text.lowercase()
+                    val allWords = words.isNotEmpty() && words.all { it in text }
+                    val cosine = queryVector?.let { qv ->
+                        vectors[note.id]?.let { Embeddings.cosine(qv, Embeddings.fromCsv(it.vectorCsv)) }
+                    } ?: 0f
+                    if (!allWords && cosine < NOTE_MEANING_FLOOR) return@mapNotNull null
+                    // An exact hit outranks a merely similar one, but a strong match in meaning
+                    // still beats a weak keyword hit buried in a long note.
+                    val score = (if (allWords) 0.4f else 0f) + 0.6f * cosine
+                    note to score
+                }
+                .sortedByDescending { it.second }
                 .take(perKind)
-                .forEach {
+                .forEach { (note, score) ->
+                    val where = note.folderId?.let { folderNames[it] }?.let { "🗂 $it" }
+                        ?: Categories.of(note.category).let { c -> "${c.icon} ${c.label}" }
                     hits += GlobalHit(
-                        kind = GlobalKind.Note, title = it.text.take(120),
-                        subtitle = Categories.of(it.category).let { c -> "${c.icon} ${c.label}" } +
-                            if (it.done) " · done" else "",
-                        refId = it.id,
+                        kind = GlobalKind.Note, title = note.text.take(120),
+                        subtitle = where + if (note.done) " · done" else "",
+                        refId = note.id, score = score,
                     )
                 }
+
+            // A folder is found by its name — "vegetable" should turn up the Tuesday market.
+            folderDao.all()
+                .filter { f -> words.isNotEmpty() && words.all { it in f.name.lowercase() } }
+                .take(perKind)
+                .forEach { hits += GlobalHit(GlobalKind.Folder, "${it.icon} ${it.name}", "folder", it.id) }
 
             search(q, perKind).forEach {
                 hits += GlobalHit(
@@ -1327,21 +1737,75 @@ class MindQuestRepository(private val context: Context) {
                 .take(perKind)
                 .forEach { hits += GlobalHit(GlobalKind.Quest, it.title, it.status, it.id) }
 
+            // A mission matches on what it is for as well as what it's called: searching
+            // "80 kg" should find the monthly weigh-in.
             habitDao.allHabits()
-                .filter { needle in it.title.lowercase() }
+                .filter { needle in it.title.lowercase() || needle in it.targetNote.orEmpty().lowercase() }
                 .take(perKind)
-                .forEach { hits += GlobalHit(GlobalKind.Habit, it.title, "🔥 ${it.streak}", it.id) }
+                .forEach { h ->
+                    val subtitle = h.targetNote?.let { "🎯 $it" } ?: "🔥 ${h.streak}"
+                    hits += GlobalHit(GlobalKind.Habit, h.title, subtitle, h.id)
+                }
 
+            // A goal is found by its name or by the words it was first written in —
+            // "crore" finds "Earn ₹1 crore", and so does "1crore inr earn".
             goalDao.allGoals()
-                .filter { needle in it.title.lowercase() }
+                .filter { needle in it.title.lowercase() || needle in it.narrative.orEmpty().lowercase() }
                 .take(perKind)
-                .forEach { hits += GlobalHit(GlobalKind.Goal, it.title, it.status, it.id) }
+                .forEach { g ->
+                    val subtitle = g.deadline?.let { "🎯 by ${Cadences.formatTarget(it)}" } ?: g.status
+                    hits += GlobalHit(GlobalKind.Goal, g.title, subtitle, g.id)
+                }
 
             hits
         }
 
+    /**
+     * Make sure every note has a vector for its current wording from the current embedder.
+     * Cheap when nothing changed — a hash comparison per note — and it only embeds the ones
+     * that are new, edited, or were computed by a different embedder, so it can run before
+     * every search and at start-up without anyone noticing. Vectors for deleted notes go.
+     */
+    suspend fun indexNotes(notes: List<NoteEntity>? = null) = withContext(Dispatchers.IO) {
+        if (embedder === HashingEmbedder) return@withContext // nothing meaningful to store
+        val all = notes ?: noteDao.allNotes()
+        val existing = noteVectorDao.all().associateBy { it.noteId }
+        val label = embedder.label
+        all.forEach { note ->
+            val hash = note.text.hashCode()
+            val current = existing[note.id]
+            if (current == null || current.textHash != hash || current.embedder != label) {
+                runCatching {
+                    noteVectorDao.upsert(
+                        NoteVectorEntity(
+                            noteId = note.id,
+                            vectorCsv = Embeddings.toCsv(embedder.embed(note.text)),
+                            textHash = hash,
+                            embedder = label,
+                        ),
+                    )
+                }
+            }
+        }
+        val live = all.map { it.id }.toSet()
+        existing.keys.filter { it !in live }.forEach { noteVectorDao.delete(it) }
+    }
+
     private companion object {
         /** Chunks re-embedded per database write during a reindex. */
         const val REINDEX_BATCH = 16
+
+        /**
+         * How close in meaning a note must be to turn up without sharing your words. MiniLM
+         * puts related short sentences around 0.4–0.7 and unrelated ones under 0.2; 0.35
+         * lets "that restaurant in Colaba" find the dhaba without every note matching.
+         */
+        const val NOTE_MEANING_FLOOR = 0.35f
+
+        /** 09:00 — the check-in lands with the morning, not in the middle of the night. */
+        const val DEFAULT_CHECKIN_MINUTE = 9 * 60
+
+        /** A small reward for turning up to a check-in, whatever the number says. */
+        const val GOAL_CHECKIN_XP = 10
     }
 }

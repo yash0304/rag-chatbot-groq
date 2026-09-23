@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.text.SpannableString
 import android.text.style.StrikethroughSpan
+import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import com.mindquest.app.R
@@ -64,8 +65,14 @@ class TodayWidget : AppWidgetProvider() {
                 // Strike first, while the item is still in the list…
                 drawAll(context, manager, struckId = id, awardedXp = 0)
                 delay(STRIKE_LINGER_MS)
-                // …then commit it and redraw without it.
-                val xp = MindQuestRepository(context.applicationContext).completeAgendaItem(id, isQuest)
+                // …then commit it and redraw without it. A failure leaves the line on the page
+                // to tap again rather than taking the whole app down from a background thread.
+                val xp = runCatching {
+                    MindQuestRepository(context.applicationContext).completeAgendaItem(id, isQuest)
+                }.getOrElse {
+                    Log.w("TodayWidget", "Couldn't complete item", it)
+                    0
+                }
                 drawAll(context, manager, struckId = null, awardedXp = xp)
                 if (xp > 0) {
                     // Let the XP land visibly before the header settles back.
@@ -88,7 +95,14 @@ class TodayWidget : AppWidgetProvider() {
         if (ids.isEmpty()) return
         // Fetch more than fit on the page: when a line is struck off, the one below it can
         // roll up into view, the way the next line arrives as the carriage advances.
-        val agenda = MindQuestRepository(context.applicationContext).todayAgenda(FETCH_ROWS)
+        // An exception here would be uncaught on a background coroutine and crash the app, so
+        // a database that can't be read just leaves the widget showing what it last showed.
+        val agenda = runCatching {
+            MindQuestRepository(context.applicationContext).todayAgenda(FETCH_ROWS)
+        }.getOrElse {
+            Log.w("TodayWidget", "Couldn't load today's agenda", it)
+            return
+        }
         val views = render(context, agenda, struckId, awardedXp)
         ids.forEach { manager.updateAppWidget(it, views) }
     }

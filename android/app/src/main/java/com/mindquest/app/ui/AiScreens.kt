@@ -14,12 +14,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.Backup
+import com.mindquest.app.data.DbEncryption
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.WeeklyReviewEntity
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.mindquest.app.domain.BiometricLock
+import com.mindquest.app.domain.ExactAlarms
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 
@@ -251,6 +259,36 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 "Repeats every 15 minutes, up to ${Reminders.MAX_ATTEMPTS} times, and stops the moment the note is done.",
                 style = MaterialTheme.typography.labelSmall, color = Muted,
             )
+
+            // Exact timing. The permission is granted on a system page, so the state is read
+            // again when the user comes back from it rather than assumed.
+            var exactOk by remember { mutableStateOf(ExactAlarms.canSchedule(context)) }
+            val exactSettings = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) {
+                exactOk = ExactAlarms.canSchedule(context)
+                if (exactOk) {
+                    scope.launch { repo.rearmNoteReminders() }
+                    notify("Reminders will now arrive on the minute.")
+                }
+            }
+            Text(
+                if (exactOk) "✓ On the minute — reminders fire at exactly the time you set."
+                else "Reminders can arrive a few minutes late: Android batches background work to save battery.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (exactOk) Verdant else Muted,
+            )
+            if (!exactOk) {
+                ExactAlarms.settingsIntent(context)?.let { intent ->
+                    OutlinedButton(onClick = { runCatching { exactSettings.launch(intent) } }) {
+                        Text("Allow exact reminder times")
+                    }
+                    Text(
+                        "Opens Android's “Alarms & reminders” page for MindQuest — switch it on and come back.",
+                        style = MaterialTheme.typography.labelSmall, color = Muted,
+                    )
+                }
+            }
         } }
 
         var stale by remember { mutableStateOf(-1) }
@@ -329,6 +367,100 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             }
         } }
 
+        EncryptionCard(repo, notify)
+
         Text("Your key and PIN are stored encrypted on this device and never leave it (the key only rides along on Sarvam requests you initiate).", style = MaterialTheme.typography.labelSmall, color = Muted)
     }
+}
+
+/**
+ * Encrypting the data file itself. Deliberately guarded: it can't be switched on without
+ * weekly backups already running, and it takes a fresh backup the moment before converting,
+ * because an encrypted file whose key is lost can only come back from a backup.
+ */
+@Composable
+private fun EncryptionCard(repo: MindQuestRepository, notify: (String) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val on = remember { DbEncryption.wanted(context) }
+    val lastError = remember { DbEncryption.lastError(context) }
+    val backupFolder = remember { repo.settings.backupFolder() }
+    var confirm by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+
+    Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Encrypt stored data", fontWeight = FontWeight.Bold, color = Parchment)
+        Text(
+            if (on) "✓ On — the data file is encrypted with a key kept in this phone's secure hardware."
+            else "Off. Android already encrypts app storage while the phone is locked; this adds " +
+                "encryption of the data file itself.",
+            style = MaterialTheme.typography.bodySmall, color = if (on) Verdant else Muted,
+        )
+        lastError?.let {
+            Text("Last attempt didn't complete, nothing was changed: $it", style = MaterialTheme.typography.labelSmall, color = Ember)
+        }
+        when {
+            on -> OutlinedButton(enabled = !working, onClick = { confirm = true }) { Text("Turn off encryption") }
+            backupFolder == null -> Text(
+                "Turn on weekly backups (Backup screen) first. If the phone ever loses the key, " +
+                    "a backup is the only way back — so encryption waits until one exists.",
+                style = MaterialTheme.typography.labelSmall, color = Ember,
+            )
+            else -> Button(enabled = !working, onClick = { confirm = true }) { Text("Encrypt my data") }
+        }
+        if (working) Text("Backing up, then restarting…", style = MaterialTheme.typography.labelSmall, color = Rune)
+    } }
+
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(if (on) "Turn off encryption?" else "Encrypt your data?") },
+            text = {
+                Text(
+                    if (on) "MindQuest will restart and convert the file back to unencrypted. " +
+                        "Nothing is changed unless the converted copy checks out."
+                    else "A fresh backup is saved to your backup folder first. Then MindQuest restarts " +
+                        "and encrypts its data; this can take a few seconds. Nothing is changed unless " +
+                        "the encrypted copy checks out.\n\nIf the phone ever loses its key — rare, but " +
+                        "possible after a factory-level reset of its security chip — only a backup can " +
+                        "bring the data back.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    working = true
+                    scope.launch {
+                        try {
+                            if (!on) {
+                                // The safety net goes in before the conversion, not after.
+                                val folder = Uri.parse(backupFolder ?: error("No backup folder"))
+                                val name = withContext(Dispatchers.IO) { Backup.writeToFolder(context, repo, folder) }
+                                repo.settings.recordAutoBackup(name, error = null)
+                            }
+                            DbEncryption.setWanted(context, !on)
+                            restartApp(context)
+                        } catch (e: Exception) {
+                            working = false
+                            notify("Stopped before changing anything: ${e.message}")
+                        }
+                    }
+                }) { Text(if (on) "Turn off & restart" else "Back up & encrypt") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * Relaunch the app in a fresh process. The conversion has to happen before the database is
+ * first opened, and every screen already holds the open one, so a clean start is the only
+ * safe moment. If a phone doesn't bring the app back by itself, opening it again does the
+ * same thing.
+ */
+internal fun restartApp(context: Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    launch?.let { context.startActivity(it) }
+    Runtime.getRuntime().exit(0)
 }

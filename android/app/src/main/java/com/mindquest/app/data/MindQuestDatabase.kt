@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [
@@ -26,8 +27,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         NoteEntity::class,
         FolderEntity::class,
         AttachmentEntity::class,
+        NoteVectorEntity::class,
+        GoalProgressEntity::class,
+        GoalCheckpointEntity::class,
     ],
-    version = 10,
+    version = 13,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -43,6 +47,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun folderDao(): FolderDao
     abstract fun attachmentDao(): AttachmentDao
+    abstract fun noteVectorDao(): NoteVectorDao
 
     companion object {
         @Volatile
@@ -93,6 +98,54 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /** v12→v13: checkpoints — mini goals inside a target goal. Additive. */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `goal_checkpoints` (`id` TEXT NOT NULL, `goalId` TEXT NOT NULL, " +
+                        "`value` REAL NOT NULL, `dueDate` TEXT NOT NULL, `planned` INTEGER NOT NULL, " +
+                        "`reachedAt` INTEGER, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_goal_checkpoints_goalId` ON `goal_checkpoints` (`goalId`)")
+            }
+        }
+
+        /**
+         * v11→v12: goals can be targets — a number by a date — with a history of readings and
+         * a check-in nudge. Additive: existing story arcs are untouched, new columns are null.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `targetValue` REAL")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `changeValue` REAL")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `unit` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `deadline` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `checkinMinuteOfDay` INTEGER")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `checkinCadence` TEXT")
+                db.execSQL("ALTER TABLE `goals` ADD COLUMN `updatedAt` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `goal_progress` (`id` TEXT NOT NULL, `goalId` TEXT NOT NULL, " +
+                        "`value` REAL NOT NULL, `note` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_goal_progress_goalId` ON `goal_progress` (`goalId`)")
+            }
+        }
+
+        /**
+         * v10→v11: repeating reminders on notes, and the vectors that let search find a
+         * note by what it means. Additive; the vectors fill in on their own afterwards.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `repeat` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `note_vectors` (`noteId` TEXT NOT NULL, " +
+                        "`vectorCsv` TEXT NOT NULL, `textHash` INTEGER NOT NULL, " +
+                        "`embedder` TEXT NOT NULL, PRIMARY KEY(`noteId`))",
+                )
             }
         }
 
@@ -164,19 +217,24 @@ abstract class MindQuestDatabase : RoomDatabase() {
             }
         }
 
+        const val NAME = "mindquest.db"
+
         fun get(context: Context): MindQuestDatabase =
             instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    MindQuestDatabase::class.java,
-                    "mindquest.db",
-                )
-                    // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
-                    // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
-                    .fallbackToDestructiveMigrationOnDowngrade()
-                    .build()
-                    .also { instance = it }
+                instance ?: build(context.applicationContext).also { instance = it }
             }
+
+        private fun build(app: Context): MindQuestDatabase {
+            // Bring the file into the state the user chose (encrypted or not) before Room
+            // opens it. With encryption off — the default — this reads one flag and returns.
+            val passphrase = DbEncryption.prepare(app, app.getDatabasePath(NAME))
+            return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
+                // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
+                // as a last resort on downgrade, which shouldn't happen in normal use.
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .fallbackToDestructiveMigrationOnDowngrade()
+                .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
+                .build()
+        }
     }
 }

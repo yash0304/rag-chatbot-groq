@@ -16,10 +16,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.AttachmentEntity
 import com.mindquest.app.data.FolderEntity
+import com.mindquest.app.data.goalForCheckpoint
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
+import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Categories
+import com.mindquest.app.domain.DateParse
+import com.mindquest.app.domain.FolderMatch
+import com.mindquest.app.domain.GoalParse
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -37,6 +43,8 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allNotes by repo.observeNotes().collectAsState(emptyList())
+    val notePhotos by repo.observeAttachments("note").collectAsState(emptyList())
+    val photosByNote = notePhotos.groupBy { it.ownerId }
     val categoryCounts by repo.observeNoteFolders().collectAsState(emptyMap())
     val customFolders by repo.observeFolders().collectAsState(emptyList())
     val customCounts by repo.observeFolderCounts().collectAsState(emptyMap())
@@ -63,6 +71,32 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     var pendingCategory by remember { mutableStateOf("general") }
     var categoryChosen by remember { mutableStateOf(false) }
 
+    // What the typed line looks like, worked out as you type and shown above the box before
+    // anything is saved: a goal (→ Goals), one of your own folders, and a date in the words.
+    var keepAsNote by remember { mutableStateOf(false) }
+    var skipFolder by remember { mutableStateOf(false) }
+    var skipDate by remember { mutableStateOf(false) }
+    val goalGuess = remember(input, customFolder) {
+        if (customFolder != null) null else GoalParse.detect(input)
+    }
+    // "90 kg by 1st October" with an 80 kg goal running is a checkpoint on the way to it.
+    val allGoals by repo.observeGoals().collectAsState(emptyList())
+    val checkpointGuess = remember(input, customFolder, allGoals) {
+        if (customFolder != null) null
+        else GoalParse.checkpoint(input)?.let { cp -> goalForCheckpoint(cp, allGoals)?.let { cp to it } }
+    }
+    val asCheckpoint = checkpointGuess != null && !keepAsNote
+    val asGoal = !asCheckpoint && goalGuess != null && !keepAsNote
+    val folderGuess = remember(input, customFolder, folder, customFolders) {
+        if (customFolder != null || folder != null) null
+        else FolderMatch.best(input, customFolders.map { it.name })?.let { customFolders[it] }
+    }
+    val dateGuess = remember(input) { DateParse.parse(input) }
+    LaunchedEffect(input.isBlank()) {
+        // A fresh line starts with fresh guesses.
+        if (input.isBlank()) { keepAsNote = false; skipFolder = false; skipDate = false }
+    }
+
     LaunchedEffect(input, categoryChosen, folder) {
         // Typing inside a folder files it there: opening Shopping and adding a line plainly
         // means "this is shopping", whatever the words happen to look like.
@@ -87,13 +121,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         ensureNotifPermission()
         scope.launch {
             val r = repo.captureNote(spoken, folderId = customFolder, category = folder)
-            notify(
-                buildString {
-                    append(r.text)
-                    r.dueAt?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
-                    if (r.folderId == null) append(" · ${Categories.of(r.category).label}")
-                },
-            )
+            notify(r.describe { timeFmt.format(Date(it)) })
         }
     }
 
@@ -115,15 +143,19 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         EditNoteDialog(
             initialText = note.text,
             initialRemindAt = note.remindAt,
+            initialRepeat = note.repeat,
             onDismiss = { editing = null },
-            onSave = { text, remindAt ->
+            onSave = { text, remindAt, repeat ->
                 editing = null
                 ensureNotifPermission()
                 scope.launch {
-                    repo.editNote(note.id, text, remindAt)
+                    repo.editNote(note.id, text, remindAt, repeat)
                     notify(
-                        if (remindAt == null) "Saved."
-                        else "Saved · ⏰ ${timeFmt.format(Date(remindAt))}",
+                        buildString {
+                            append("Saved")
+                            remindAt?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
+                            repeat?.let { append(" · 🔁 ${Cadences.of(it).label}") }
+                        },
                     )
                 }
             },
@@ -205,7 +237,17 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             items(notes) { note ->
                 NoteCard(
                     note = note,
-                    onToggleDone = { scope.launch { repo.setNoteDone(note.id, !note.done) } },
+                    photos = photosByNote[note.id].orEmpty(),
+                    onAddPhoto = { path -> scope.launch { repo.addAttachment("note", note.id, path) } },
+                    onRemovePhoto = { scope.launch { repo.deleteAttachment(it.id) } },
+                    onToggleDone = {
+                        scope.launch {
+                            // A repeating note rolls forward instead of ticking; say where to.
+                            repo.setNoteDone(note.id, !note.done)?.let { next ->
+                                notify("Done — next one ${timeFmt.format(Date(next))}.")
+                            }
+                        }
+                    },
                     onEdit = { editing = note },
                     onRemind = {
                         ensureNotifPermission()
@@ -244,14 +286,74 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             )
         }
 
+        // Where this line will go, shown before it goes there. Each guess is one tap to undo.
         if (input.isNotBlank()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (categoryChosen) "Filing under" else "Looks like",
-                    style = MaterialTheme.typography.labelSmall, color = Muted,
-                )
-                Spacer(Modifier.width(6.dp))
-                CategoryChip(pendingCategory) { pendingCategory = it; categoryChosen = true }
+            if (asCheckpoint && checkpointGuess != null) {
+                val (cp, main) = checkpointGuess
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by ${Cadences.formatDay(cp.date)} → ${main.title}",
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { keepAsNote = true }) {
+                        Text("keep as note", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else if (asGoal && goalGuess != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "🎯 Goal: ${goalGuess.title} by ${Cadences.formatTarget(goalGuess.deadline.toString())} → Goals",
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { keepAsNote = true }) {
+                        Text("keep as note", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (categoryChosen) "Filing under" else "Looks like",
+                        style = MaterialTheme.typography.labelSmall, color = Muted,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    CategoryChip(pendingCategory) { pendingCategory = it; categoryChosen = true }
+                    if (goalGuess != null) {
+                        TextButton(onClick = { keepAsNote = false }) {
+                            Text("🎯 make it a goal", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                if (folderGuess != null && !skipFolder) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "🗂 Into “${folderGuess.name}”",
+                            style = MaterialTheme.typography.labelSmall, color = Rune,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { skipFolder = true }) {
+                            Text("✕", style = MaterialTheme.typography.labelSmall, color = Muted)
+                        }
+                    }
+                }
+                val found = dateGuess.dueAt
+                if (found != null && pendingRemind == null && !skipDate) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            buildString {
+                                append("⏰ ${timeFmt.format(Date(found))}")
+                                dateGuess.repeat?.let { append(" · 🔁 ${Cadences.of(it).label}") }
+                                append(" — saved as “${dateGuess.text}”")
+                            },
+                            style = MaterialTheme.typography.labelSmall, color = Rune,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { skipDate = true }) {
+                            Text("✕", style = MaterialTheme.typography.labelSmall, color = Muted)
+                        }
+                    }
+                }
             }
         }
 
@@ -277,14 +379,49 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             Button(
                 enabled = input.isNotBlank(),
                 onClick = {
-                    val t = input.trim()
-                    val at = pendingRemind
+                    val raw = input.trim()
+                    val goal = if (asGoal) goalGuess else null
+                    val checkpoint = if (asCheckpoint) checkpointGuess else null
+                    // A date typed into the line counts unless it was dismissed or a time was
+                    // picked with the clock, which always wins.
+                    val typedDate = dateGuess.takeIf { it.dueAt != null && pendingRemind == null && !skipDate }
+                    val at = pendingRemind ?: typedDate?.dueAt
+                    val text = typedDate?.text?.ifBlank { raw } ?: raw
+                    val repeat = typedDate?.repeat
                     val cat = pendingCategory
                     val chosen = categoryChosen
+                    val intoFolder = customFolder ?: folderGuess?.takeIf { !skipFolder }?.id
+                    val intoFolderName = if (customFolder == null) folderGuess?.takeIf { !skipFolder }?.name else null
                     input = ""; pendingRemind = null; categoryChosen = false
+                    if (at != null) ensureNotifPermission()
                     scope.launch {
-                        val id = repo.addNote(t, at, cat, chosen)
-                        customFolder?.let { repo.setNoteFolder(id, it) }
+                        if (checkpoint != null) {
+                            val (cp, main) = checkpoint
+                            val met = repo.addCheckpoint(main.id, cp.value, cp.date)
+                            notify(
+                                "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by ${Cadences.formatDay(cp.date)} → ${main.title}" +
+                                    if (met) " · already there ✓" else "",
+                            )
+                            return@launch
+                        }
+                        if (goal != null) {
+                            repo.createTargetGoal(goal, narrative = raw)
+                            ensureNotifPermission()
+                            notify("🎯 ${goal.title} → Goals · check-in on the 1st of each month")
+                            return@launch
+                        }
+                        val id = repo.addNote(text, at, cat, chosen, repeat)
+                        intoFolder?.let { repo.setNoteFolder(id, it) }
+                        // Say where it went when that isn't the list on screen.
+                        if (intoFolderName != null || at != null) {
+                            notify(
+                                buildString {
+                                    append("Added")
+                                    intoFolderName?.let { append(" → 🗂 $it") }
+                                    at?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
+                                },
+                            )
+                        }
                     }
                 },
             ) { Text("Add") }
@@ -295,6 +432,9 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 @Composable
 private fun NoteCard(
     note: NoteEntity,
+    photos: List<AttachmentEntity>,
+    onAddPhoto: (String) -> Unit,
+    onRemovePhoto: (AttachmentEntity) -> Unit,
     onToggleDone: () -> Unit,
     onEdit: () -> Unit,
     onRemind: () -> Unit,
@@ -332,6 +472,7 @@ private fun NoteCard(
                     buildString {
                         append(timeFmt.format(Date(note.createdAt)))
                         note.remindAt?.let { append("  ·  ⏰ ${timeFmt.format(Date(it))}") }
+                        note.repeat?.let { append(" 🔁 ${Cadences.of(it).label}") }
                         if (note.questId != null) append("  ·  ⚔️")
                         if (note.docId != null) append("  ·  📜")
                     },
@@ -340,6 +481,11 @@ private fun NoteCard(
                 EditedStamp(note.updatedAt)
             }
             CategoryChip(note.category, onCategory)
+            // Only notes that have photos show the strip — most notes are a line of text,
+            // and a camera button on every one of them would turn the Inbox into clutter.
+            if (photos.isNotEmpty()) {
+                PhotoStrip(photos = photos, onAdd = onAddPhoto, onRemove = onRemovePhoto)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = if (note.remindAt == null) onRemind else onClearRemind) {
                     Text(if (note.remindAt == null) "Remind" else "Unremind", style = MaterialTheme.typography.labelSmall)

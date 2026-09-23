@@ -31,6 +31,9 @@ object Cadences {
         Cadence("daily", "daily", "day"),
         Cadence("weekdays", "weekdays", "day"),
         Cadence("weekly", "weekly", "week"),
+        // The 1st and the 16th: two per month on fixed dates, not every fifteen days, so it
+        // stays on the same days of the month forever.
+        Cadence("halfmonthly", "half-monthly", "half-month"),
         Cadence("monthly", "monthly", "month"),
         Cadence("quarterly", "quarterly", "quarter"),
         Cadence("halfyearly", "half-yearly", "half-year"),
@@ -49,6 +52,7 @@ object Cadences {
     fun periodIndex(cadence: String, date: LocalDate): Long = when (cadence) {
         // Epoch day 0 was a Thursday; +3 moves the boundary onto Monday.
         "weekly" -> (date.toEpochDay() + 3).floorDiv(7)
+        "halfmonthly" -> (date.year * 12L + (date.monthValue - 1)) * 2 + if (date.dayOfMonth >= 16) 1 else 0
         "monthly" -> date.year * 12L + (date.monthValue - 1)
         "quarterly" -> date.year * 4L + (date.monthValue - 1) / 3
         "halfyearly" -> date.year * 2L + (date.monthValue - 1) / 6
@@ -70,6 +74,7 @@ object Cadences {
     /** The first day of the period [date] falls in — the day the nudge is due. */
     fun periodStart(cadence: String, date: LocalDate): LocalDate = when (cadence) {
         "weekly" -> date.with(DayOfWeek.MONDAY)
+        "halfmonthly" -> date.withDayOfMonth(if (date.dayOfMonth >= 16) 16 else 1)
         "monthly" -> date.withDayOfMonth(1)
         "quarterly" -> LocalDate.of(date.year, (date.monthValue - 1) / 3 * 3 + 1, 1)
         "halfyearly" -> LocalDate.of(date.year, (date.monthValue - 1) / 6 * 6 + 1, 1)
@@ -82,6 +87,7 @@ object Cadences {
         val start = periodStart(cadence, date)
         return when (cadence) {
             "weekly" -> start.plusWeeks(1)
+            "halfmonthly" -> if (start.dayOfMonth == 1) start.withDayOfMonth(16) else start.plusMonths(1).withDayOfMonth(1)
             "monthly" -> start.plusMonths(1)
             "quarterly" -> start.plusMonths(3)
             "halfyearly" -> start.plusMonths(6)
@@ -120,6 +126,62 @@ object Cadences {
         minuteOfDay: Int,
         now: LocalDateTime = LocalDateTime.now(),
     ): Long = (nextFireAt(cadence, minuteOfDay, now) - System.currentTimeMillis()).coerceAtLeast(1_000L)
+
+    /**
+     * The same slot one interval later — the 5th of next month, next Tuesday at 9. Unlike
+     * [nextPeriodStart] this keeps the day you chose rather than snapping to the start of a
+     * period: rent due on the 5th is due on the 5th, not the 1st.
+     *
+     * Month arithmetic clamps, so a reminder on the 31st lands on the 30th in a 30-day month
+     * and stays there. That is java.time's rule, and it is the lesser evil next to a reminder
+     * that skips February altogether.
+     */
+    fun advance(cadence: String, from: LocalDateTime): LocalDateTime = when (cadence) {
+        "weekly" -> from.plusWeeks(1)
+        // Alternates between the day you chose and fifteen days either side: the 5th and
+        // the 20th, the 1st and the 16th.
+        "halfmonthly" -> if (from.dayOfMonth <= 15) {
+            from.withDayOfMonth(minOf(from.dayOfMonth + 15, from.toLocalDate().lengthOfMonth()))
+        } else {
+            from.plusMonths(1).withDayOfMonth(from.dayOfMonth - 15)
+        }
+        "monthly" -> from.plusMonths(1)
+        "quarterly" -> from.plusMonths(3)
+        "halfyearly" -> from.plusMonths(6)
+        "yearly" -> from.plusYears(1)
+        "weekdays" -> {
+            var d = from.plusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY) {
+                d = d.plusDays(1)
+            }
+            d
+        }
+        else -> from.plusDays(1)
+    }
+
+    /**
+     * When a repeating reminder should next go off, counted from when it was due — not from
+     * when it was ticked. Paying the 5th-of-the-month rent on the 7th must not move next
+     * month's reminder to the 7th. Steps forward as many intervals as needed to land in the
+     * future, so a reminder ticked weeks late doesn't come back already overdue.
+     */
+    fun nextOccurrence(
+        cadence: String,
+        scheduledAt: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Long {
+        val zone = ZoneId.systemDefault()
+        var next = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(scheduledAt), zone)
+        var guard = 0
+        do {
+            next = advance(cadence, next)
+            guard++
+        } while (next.atZone(zone).toInstant().toEpochMilli() <= now && guard < 10_000)
+        return next.atZone(zone).toInstant().toEpochMilli()
+    }
+
+    /** "1 Oct" — a checkpoint's day, short enough to sit in a row. */
+    fun formatDay(date: LocalDate): String = date.format(DateTimeFormatter.ofPattern("d MMM"))
 
     /** "Mar 2027" — a target date is a month, not an appointment, so it reads as one. */
     fun formatTarget(isoDate: String): String = runCatching {

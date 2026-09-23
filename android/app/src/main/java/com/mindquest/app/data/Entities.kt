@@ -114,9 +114,85 @@ data class HabitCheckinEntity(
 data class GoalEntity(
     @PrimaryKey val id: String,
     val title: String,
+    /** For a target goal, the sentence it was created from — "1crore inr earn by March 2027". */
     val narrative: String? = null,
     val arcTheme: String? = null,
     val status: String = "active", // active|completed|archived
+    /**
+     * A goal is either a story arc (a list of milestones, the original kind) or a target:
+     * a number to reach by a date — "80 kg by March 2027". A target goal has [targetValue]
+     * or [changeValue] set; an arc has neither.
+     */
+    val targetValue: Double? = null,
+    /**
+     * "Lose 10 kg" before its first weigh-in: a signed change with no starting point yet.
+     * The first reading turns it into an absolute [targetValue] and clears this.
+     */
+    val changeValue: Double? = null,
+    val unit: String? = null, // "kg", "₹", "books"…
+    val deadline: String? = null, // ISO yyyy-MM-dd
+    /** Minutes past midnight for the check-in nudge; null = off. */
+    val checkinMinuteOfDay: Int? = null,
+    /**
+     * How often to check in, as a Cadences id; null means monthly. Nullable rather than
+     * defaulted so the migration can add it as a plain column — a text default has to match
+     * Room's expectations character for character, and a mismatch refuses to open the data.
+     */
+    val checkinCadence: String? = null,
+    val updatedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * A mini goal on the way to a main one: "90 kg by 1 October" inside "80 kg by March 2027".
+ *
+ * Either set by hand or laid out by a plan — weekly, half-monthly or monthly steps from where
+ * you are now to the target. [planned] keeps the two apart, so redoing a plan replaces only
+ * its own steps and never one you set yourself. [reachedAt] is stamped the first time a
+ * reading crosses it on or before its date, which is also when its XP is paid — once.
+ */
+@Entity(tableName = "goal_checkpoints", indices = [Index("goalId")])
+@Serializable
+data class GoalCheckpointEntity(
+    @PrimaryKey val id: String,
+    val goalId: String,
+    val value: Double,
+    val dueDate: String, // ISO yyyy-MM-dd
+    val planned: Boolean = false,
+    val reachedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** A number to reach by a date, as opposed to a story arc of milestones. */
+val GoalEntity.isTarget: Boolean get() = targetValue != null || changeValue != null
+
+/** The check-in cadence with its default applied. */
+val GoalEntity.cadence: String get() = checkinCadence ?: "monthly"
+
+/**
+ * The main goal a checkpoint line belongs to: an active target goal in the same unit whose
+ * deadline is still after the checkpoint's date. "90 kg by 1 October" belongs to "80 kg by
+ * March 2027"; with two kg goals, the one ending soonest is the nearer ambition.
+ */
+fun goalForCheckpoint(cp: com.mindquest.app.domain.GoalParse.Checkpoint, goals: List<GoalEntity>): GoalEntity? =
+    goals
+        .filter { it.status == "active" && it.isTarget && it.unit == cp.unit }
+        .mapNotNull { g -> g.deadline?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }?.let { g to it } }
+        .filter { (_, deadline) -> cp.date.isBefore(deadline) }
+        .minByOrNull { (_, deadline) -> deadline }
+        ?.first
+
+/**
+ * One reading against a target goal: the scales on the 1st, the savings total at month end.
+ * The history is the point — a goal you can't see moving is a goal you stop believing in.
+ */
+@Entity(tableName = "goal_progress", indices = [Index("goalId")])
+@Serializable
+data class GoalProgressEntity(
+    @PrimaryKey val id: String,
+    val goalId: String,
+    val value: Double,
+    val note: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -241,7 +317,31 @@ data class NoteEntity(
     val folderId: String? = null,
     /** When the user last changed the wording or the reminder. Null = never edited. */
     val updatedAt: Long? = null,
+    /**
+     * How often the reminder comes back, as a Cadences id ("monthly"), or null for once.
+     * A repeating note is never left ticked: marking it done rolls the reminder forward to
+     * the next date, so "rent on the 5th" is one note for as long as you pay rent.
+     */
+    val repeat: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * A note's meaning, as a vector, so search can find "that restaurant in Colaba" from a note
+ * that only says "Gokul Dhaba — must visit".
+ *
+ * Its own table rather than a column on the note: every change to any note re-emits the
+ * whole Inbox list, and carrying a few kilobytes of numbers per note through every one of
+ * those would be paid for on each keystroke. [textHash] and [embedder] say what the vector
+ * was computed from, so an edited note or a switched-in embedder is noticed and redone.
+ * Not exported — it is derived data and rebuilds itself after a restore.
+ */
+@Entity(tableName = "note_vectors")
+data class NoteVectorEntity(
+    @PrimaryKey val noteId: String,
+    val vectorCsv: String,
+    val textHash: Int,
+    val embedder: String,
 )
 
 @Entity(tableName = "weekly_reviews")

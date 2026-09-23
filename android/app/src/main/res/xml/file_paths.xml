@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Only the attachments folder is ever shared, and only with the camera app for the length of
-  one capture. Nothing else in the app's storage is reachable this way.
+  Two folders, each shared only for one call: attachments with the camera app for one capture,
+  and a freshly written backup with whichever app you choose to send it to (Drive, email).
+  Nothing else in the app's storage is reachable this way.
 -->
 <paths>
     <files-path name="attachments" path="attachments/" />
+    <cache-path name="backups" path="backups/" />
 </paths>

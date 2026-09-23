@@ -57,6 +57,15 @@ jobs:
             echo "::warning::No SIDELOAD_KEYSTORE_BASE64 secret. Compiling only; no Release will be published."
           fi
 
+      # The date and calendar rules decide when every reminder fires, and a wrong one fails
+      # silently — a nudge that never comes. They are tested before anything is built, so a
+      # regression stops the release instead of reaching the phone.
+      - name: Unit tests
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:testSideloadUnitTest
+
       - name: Build APK
         working-directory: android
         env:

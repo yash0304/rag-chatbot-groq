@@ -125,6 +125,14 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Optional database encryption, off unless turned on in Settings. 4.6.x pairs with
+    // Room 2.6's androidx.sqlite; its native library is only loaded when encryption is on.
+    implementation("net.zetetic:sqlcipher-android:4.6.1@aar")
+
+    // Plain JVM unit tests for the date and calendar rules — the logic that decides when a
+    // reminder goes off. CI runs them before building, so a broken rule never ships.
+    testImplementation("junit:junit:4.13.2")
 }
 
 // ---------------------------------------------------------------------------

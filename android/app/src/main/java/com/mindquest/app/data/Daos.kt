@@ -135,6 +135,56 @@ interface GoalDao {
 
     @Query("SELECT * FROM milestones")
     suspend fun allMilestones(): List<MilestoneEntity>
+
+    @Query("DELETE FROM goals WHERE id = :id")
+    suspend fun deleteGoal(id: String)
+
+    @Query("DELETE FROM milestones WHERE goalId = :goalId")
+    suspend fun deleteMilestonesOf(goalId: String)
+
+    // ---- progress readings for target goals ----
+
+    @Upsert
+    suspend fun upsertProgress(entry: GoalProgressEntity)
+
+    @Query("SELECT * FROM goal_progress ORDER BY createdAt")
+    fun observeAllProgress(): Flow<List<GoalProgressEntity>>
+
+    @Query("SELECT * FROM goal_progress WHERE goalId = :goalId ORDER BY createdAt")
+    suspend fun progressOf(goalId: String): List<GoalProgressEntity>
+
+    @Query("DELETE FROM goal_progress WHERE id = :id")
+    suspend fun deleteProgress(id: String)
+
+    @Query("DELETE FROM goal_progress WHERE goalId = :goalId")
+    suspend fun deleteProgressOf(goalId: String)
+
+    @Query("SELECT * FROM goal_progress")
+    suspend fun allProgress(): List<GoalProgressEntity>
+
+    // ---- checkpoints: mini goals inside a target goal ----
+
+    @Upsert
+    suspend fun upsertCheckpoint(checkpoint: GoalCheckpointEntity)
+
+    @Query("SELECT * FROM goal_checkpoints ORDER BY dueDate")
+    fun observeAllCheckpoints(): Flow<List<GoalCheckpointEntity>>
+
+    @Query("SELECT * FROM goal_checkpoints WHERE goalId = :goalId ORDER BY dueDate")
+    suspend fun checkpointsOf(goalId: String): List<GoalCheckpointEntity>
+
+    @Query("DELETE FROM goal_checkpoints WHERE id = :id")
+    suspend fun deleteCheckpoint(id: String)
+
+    @Query("DELETE FROM goal_checkpoints WHERE goalId = :goalId")
+    suspend fun deleteCheckpointsOf(goalId: String)
+
+    /** Clear a plan's steps that haven't been reached; hit ones stay as history. */
+    @Query("DELETE FROM goal_checkpoints WHERE goalId = :goalId AND planned = 1 AND reachedAt IS NULL")
+    suspend fun deleteOpenPlannedOf(goalId: String)
+
+    @Query("SELECT * FROM goal_checkpoints")
+    suspend fun allCheckpoints(): List<GoalCheckpointEntity>
 }
 
 @Dao
@@ -217,6 +267,18 @@ interface FolderDao {
 
     @Query("UPDATE notes SET folderId = NULL WHERE folderId = :id")
     suspend fun detachNotes(id: String)
+}
+
+@Dao
+interface NoteVectorDao {
+    @Upsert
+    suspend fun upsert(vector: NoteVectorEntity)
+
+    @Query("SELECT * FROM note_vectors")
+    suspend fun all(): List<NoteVectorEntity>
+
+    @Query("DELETE FROM note_vectors WHERE noteId = :noteId")
+    suspend fun delete(noteId: String)
 }
 
 @Dao
