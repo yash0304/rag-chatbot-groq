@@ -3,6 +3,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Reminders on the minute. A "special app access" permission the user switches on in
+      Settings (Android 14+ leaves it off); without it reminders fall back to WorkManager.
+      Shipped in its own build, separate from everything else, so that if Play Protect ever
+      objected to it the previous build — and all its data — would be untouched.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Already declared by WorkManager's own manifest; stated here because we now rely on it
+         directly to put exact alarms back after a restart. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- SEND_SMS is removed for now: Play Protect blocked the install of the build that
          introduced it. It is the likely cause (the classic premium-SMS fraud signature) but
          that build also added a widget receiver, so this changes one variable to be certain.
@@ -70,6 +80,17 @@
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
             </intent-filter>
         </activity>
+
+        <!-- Fires exact reminders and re-arms them after a reboot, an update, or permission. -->
+        <receiver
+            android:name=".domain.ReminderAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Done / Snooze buttons on reminders. Not exported: only our own notifications reach it. -->
         <receiver

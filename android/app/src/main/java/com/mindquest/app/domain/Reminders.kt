@@ -26,8 +26,9 @@ import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 /**
- * Reminder delivery. Scheduling goes through WorkManager so a pending reminder survives app
- * death and reboots, and nothing here touches the network.
+ * Reminder delivery. A note reminder uses an exact alarm when the user allows them (see
+ * ExactAlarms) and WorkManager otherwise; either way it survives app death and reboots, and
+ * nothing here touches the network.
  *
  * Two deliberate behaviours beyond a plain notification, both because a notification you
  * swipe away half-asleep has done nothing:
@@ -67,10 +68,16 @@ object Reminders {
         ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) ==
             PackageManager.PERMISSION_GRANTED
 
-    /** Schedule (or reschedule) a reminder for a note. Past times are ignored. */
+    /**
+     * Schedule (or reschedule) a reminder for a note. Past times are ignored. On time to the
+     * minute when exact alarms are allowed; otherwise through WorkManager, which may run a few
+     * minutes late but needs no permission at all.
+     */
     fun schedule(context: Context, noteId: String, text: String, whenMillis: Long) {
         val delay = whenMillis - System.currentTimeMillis()
         if (delay <= 0) return
+        ensureChannel(context)
+        if (ExactAlarms.canSchedule(context) && ExactAlarms.set(context, noteId, whenMillis)) return
         enqueue(context, noteId, text, delay, attempt = 1)
     }
 
@@ -89,8 +96,10 @@ object Reminders {
         enqueue(context, noteId, text, TimeUnit.MINUTES.toMillis(REPEAT_MINUTES), nextAttempt)
     }
 
+    /** Cancel both routes: a reminder may be waiting on either, depending on when it was set. */
     fun cancel(context: Context, noteId: String) {
         WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(TAG_PREFIX + noteId)
+        ExactAlarms.cancel(context, noteId)
     }
 
     // ---------- recurring missions ----------
@@ -178,54 +187,67 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
     CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val noteId = inputData.getString(Reminders.KEY_NOTE_ID).orEmpty()
-        val attempt = inputData.getInt(Reminders.KEY_ATTEMPT, 1)
-        val fallbackText = inputData.getString(Reminders.KEY_TEXT).orEmpty().ifBlank { "Reminder" }
+        NoteReminderDelivery.deliver(
+            context = applicationContext,
+            noteId = inputData.getString(Reminders.KEY_NOTE_ID).orEmpty(),
+            fallbackText = inputData.getString(Reminders.KEY_TEXT).orEmpty(),
+            attempt = inputData.getInt(Reminders.KEY_ATTEMPT, 1),
+        )
+        return Result.success()
+    }
+}
 
+/**
+ * Fires one note reminder: notification, optional text, and the next nag if still undone.
+ *
+ * Shared by the WorkManager path and the exact-alarm path so a reminder looks and behaves
+ * the same however it was woken — same wording, same Done and Snooze buttons, same repeats.
+ */
+object NoteReminderDelivery {
+
+    suspend fun deliver(context: Context, noteId: String, fallbackText: String, attempt: Int) {
+        val app = context.applicationContext
         // Read the note back rather than trusting the text captured at scheduling time — it
         // may have been edited, completed or deleted in the meantime.
-        val note = runCatching {
-            MindQuestDatabase.get(applicationContext).noteDao().get(noteId)
-        }.getOrNull()
+        val note = runCatching { MindQuestDatabase.get(app).noteDao().get(noteId) }.getOrNull()
 
-        if (noteId.isNotEmpty() && note == null) return Result.success() // deleted
-        if (note?.done == true) return Result.success() // already handled
+        if (noteId.isNotEmpty() && note == null) return // deleted
+        if (note?.done == true) return // already handled
 
-        val text = note?.text?.takeIf { it.isNotBlank() } ?: fallbackText
-        val settings = SettingsStore(applicationContext)
+        val text = note?.text?.takeIf { it.isNotBlank() } ?: fallbackText.ifBlank { "Reminder" }
+        val settings = SettingsStore(app)
 
-        postNotification(noteId, text, attempt)
+        post(app, noteId, text, attempt)
 
         val number = settings.reminderPhone()
-        if (settings.smsRemindersEnabled() && number != null && Reminders.hasSmsPermission(applicationContext)) {
-            Reminders.sendSms(applicationContext, number, "MindQuest reminder: $text")
+        if (settings.smsRemindersEnabled() && number != null && Reminders.hasSmsPermission(app)) {
+            Reminders.sendSms(app, number, "MindQuest reminder: $text")
         }
 
         // Keep nagging while it is still outstanding, but stop eventually — an alarm that
         // never gives up gets silenced at the OS level, which would be worse than useless.
         if (settings.repeatUntilDone() && note != null && attempt < Reminders.MAX_ATTEMPTS) {
-            Reminders.scheduleRepeat(applicationContext, noteId, text, attempt + 1)
+            Reminders.scheduleRepeat(app, noteId, text, attempt + 1)
         }
 
-        TodayWidget.refresh(applicationContext)
-        return Result.success()
+        TodayWidget.refresh(app)
     }
 
-    private fun postNotification(noteId: String, text: String, attempt: Int) {
-        if (!Reminders.hasPermission(applicationContext)) return
-        Reminders.ensureChannel(applicationContext)
+    private fun post(context: Context, noteId: String, text: String, attempt: Int) {
+        if (!Reminders.hasPermission(context)) return
+        Reminders.ensureChannel(context)
 
-        val launch = applicationContext.packageManager
-            .getLaunchIntentForPackage(applicationContext.packageName)
+        val launch = context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
             ?.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
         val pending = launch?.let {
             PendingIntent.getActivity(
-                applicationContext, noteId.hashCode(), it,
+                context, noteId.hashCode(), it,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }
 
-        val notification = NotificationCompat.Builder(applicationContext, Reminders.CHANNEL_ID)
+        val notification = NotificationCompat.Builder(context, Reminders.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(if (attempt > 1) "Still waiting ($attempt)" else "MindQuest reminder")
             .setContentText(text)
@@ -240,13 +262,13 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
                     addAction(
                         0, "✓ Done",
                         ReminderActionReceiver.pendingIntent(
-                            applicationContext, ReminderActionReceiver.ACTION_NOTE_DONE, noteId,
+                            context, ReminderActionReceiver.ACTION_NOTE_DONE, noteId,
                         ),
                     )
                     addAction(
                         0, "⏰ Snooze 1h",
                         ReminderActionReceiver.pendingIntent(
-                            applicationContext, ReminderActionReceiver.ACTION_NOTE_SNOOZE, noteId,
+                            context, ReminderActionReceiver.ACTION_NOTE_SNOOZE, noteId,
                         ),
                     )
                 }
@@ -254,8 +276,7 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
             .build()
 
         try {
-            NotificationManagerCompat.from(applicationContext)
-                .notify(noteId.hashCode(), notification)
+            NotificationManagerCompat.from(context).notify(noteId.hashCode(), notification)
         } catch (e: SecurityException) {
             // permission revoked between scheduling and firing
         }

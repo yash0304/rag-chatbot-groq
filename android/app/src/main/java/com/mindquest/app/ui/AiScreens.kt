@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.mindquest.app.domain.BiometricLock
+import com.mindquest.app.domain.ExactAlarms
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 
@@ -258,6 +259,36 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 "Repeats every 15 minutes, up to ${Reminders.MAX_ATTEMPTS} times, and stops the moment the note is done.",
                 style = MaterialTheme.typography.labelSmall, color = Muted,
             )
+
+            // Exact timing. The permission is granted on a system page, so the state is read
+            // again when the user comes back from it rather than assumed.
+            var exactOk by remember { mutableStateOf(ExactAlarms.canSchedule(context)) }
+            val exactSettings = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) {
+                exactOk = ExactAlarms.canSchedule(context)
+                if (exactOk) {
+                    scope.launch { repo.rearmNoteReminders() }
+                    notify("Reminders will now arrive on the minute.")
+                }
+            }
+            Text(
+                if (exactOk) "✓ On the minute — reminders fire at exactly the time you set."
+                else "Reminders can arrive a few minutes late: Android batches background work to save battery.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (exactOk) Verdant else Muted,
+            )
+            if (!exactOk) {
+                ExactAlarms.settingsIntent(context)?.let { intent ->
+                    OutlinedButton(onClick = { runCatching { exactSettings.launch(intent) } }) {
+                        Text("Allow exact reminder times")
+                    }
+                    Text(
+                        "Opens Android's “Alarms & reminders” page for MindQuest — switch it on and come back.",
+                        style = MaterialTheme.typography.labelSmall, color = Muted,
+                    )
+                }
+            }
         } }
 
         var stale by remember { mutableStateOf(-1) }
