@@ -161,6 +161,30 @@ interface GoalDao {
 
     @Query("SELECT * FROM goal_progress")
     suspend fun allProgress(): List<GoalProgressEntity>
+
+    // ---- checkpoints: mini goals inside a target goal ----
+
+    @Upsert
+    suspend fun upsertCheckpoint(checkpoint: GoalCheckpointEntity)
+
+    @Query("SELECT * FROM goal_checkpoints ORDER BY dueDate")
+    fun observeAllCheckpoints(): Flow<List<GoalCheckpointEntity>>
+
+    @Query("SELECT * FROM goal_checkpoints WHERE goalId = :goalId ORDER BY dueDate")
+    suspend fun checkpointsOf(goalId: String): List<GoalCheckpointEntity>
+
+    @Query("DELETE FROM goal_checkpoints WHERE id = :id")
+    suspend fun deleteCheckpoint(id: String)
+
+    @Query("DELETE FROM goal_checkpoints WHERE goalId = :goalId")
+    suspend fun deleteCheckpointsOf(goalId: String)
+
+    /** Clear a plan's steps that haven't been reached; hit ones stay as history. */
+    @Query("DELETE FROM goal_checkpoints WHERE goalId = :goalId AND planned = 1 AND reachedAt IS NULL")
+    suspend fun deleteOpenPlannedOf(goalId: String)
+
+    @Query("SELECT * FROM goal_checkpoints")
+    suspend fun allCheckpoints(): List<GoalCheckpointEntity>
 }
 
 @Dao

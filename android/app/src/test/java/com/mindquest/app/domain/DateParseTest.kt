@@ -86,6 +86,12 @@ class DateParseTest {
         assertEquals(LocalDateTime.of(2026, 9, 10, 21, 0), due("take vitamins every day at 9pm"))
     }
 
+    @Test fun halfMonthlyIsNotReadAsMonthly() {
+        val p = DateParse.parse("weigh in half monthly from the 16th", now)
+        assertEquals("halfmonthly", p.repeat)
+        assertEquals("halfmonthly", DateParse.parse("pay the maid twice a month on the 1st", now).repeat)
+    }
+
     @Test fun aRepeatWordWithNoDateLeavesTheSentenceAlone() {
         val p = DateParse.parse("daily standup notes", now)
         assertEquals("daily standup notes", p.text)

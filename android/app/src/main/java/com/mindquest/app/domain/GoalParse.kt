@@ -105,6 +105,36 @@ object GoalParse {
         )
     }
 
+    /** A mini goal read from a sentence: "90 kg by 1st October" → 90 kg on 1 Oct. */
+    data class Checkpoint(val value: Double, val unit: String, val date: LocalDate)
+
+    /**
+     * Read a checkpoint — a level by a date, however near. Unlike [detect] it accepts a date
+     * a week away, because a checkpoint is meant to be close; the caller decides whether a
+     * main goal exists for it to belong to. Changes ("lose 2 kg by Friday") aren't levels
+     * and aren't read here.
+     */
+    fun checkpoint(raw: String, today: LocalDate = LocalDate.now()): Checkpoint? {
+        val lower = raw.trim().lowercase(Locale.ROOT)
+        if (lower.isEmpty() || ERRAND.containsMatchIn(lower)) return null
+        if (LOSE.containsMatchIn(lower) || GAIN.containsMatchIn(lower)) return null
+        val (value, unit) = target(lower) ?: return null
+        val date = dateOf(raw, today) ?: return null
+        if (date.isBefore(today)) return null
+        return Checkpoint(value, unit, date)
+    }
+
+    /**
+     * Any date a sentence names: a month or year ("by December", "by 2027") the way goals
+     * say it, or a day ("by 1st October", "by Friday") the way errands do.
+     */
+    fun dateOf(raw: String, today: LocalDate = LocalDate.now()): LocalDate? {
+        deadline(raw.trim().lowercase(Locale.ROOT), today)?.let { return it.first }
+        return DateParse.parse(raw, today.atTime(12, 0)).dueAt?.let {
+            java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        }
+    }
+
     /** The amount and unit a sentence is aiming at, e.g. 1.0E7 to "₹", or 80.0 to "kg". */
     private fun target(lower: String): Pair<Double, String>? {
         MONEY_BEFORE.find(lower)?.let { m -> return amount(m.groupValues[1], m.groupValues[2]) to "₹" }

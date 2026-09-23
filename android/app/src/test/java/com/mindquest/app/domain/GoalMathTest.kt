@@ -57,4 +57,63 @@ class GoalMathTest {
         assertFalse(GoalMath.isReached(65.0, "kg", start = 60.0, latest = 64.0))
         assertTrue(GoalMath.isReached(80.0, "kg", start = 90.0, latest = 79.5))
     }
+
+    // ---- checkpoints ----
+
+    @Test fun monthlyPlanFromNinetyFiveToEighty() {
+        val steps = GoalMath.plan(95.0, 80.0, "kg", today, march2027, "monthly")
+        // The 1st of each month from October to March — the deadline itself is the main goal.
+        assertEquals(6, steps.size)
+        assertEquals(LocalDate.of(2026, 10, 1), steps.first().first)
+        assertEquals(LocalDate.of(2027, 3, 1), steps.last().first)
+        // 8 of 189 days in → 95 − 15 × 8/189 ≈ 94.4; 159 days in → ≈ 82.4.
+        assertEquals(94.4, steps.first().second, 1e-9)
+        assertEquals(82.4, steps.last().second, 1e-9)
+    }
+
+    @Test fun weeklyAndHalfMonthlyPlansLandOnTheirDays() {
+        val weekly = GoalMath.plan(95.0, 80.0, "kg", today, march2027, "weekly")
+        assertEquals(LocalDate.of(2026, 9, 28), weekly.first().first) // a Monday
+        assertEquals(27, weekly.size)
+        val half = GoalMath.plan(95.0, 80.0, "kg", today, march2027, "halfmonthly")
+        assertEquals(LocalDate.of(2026, 10, 1), half[0].first)
+        assertEquals(LocalDate.of(2026, 10, 16), half[1].first)
+        assertEquals(12, half.size)
+    }
+
+    @Test fun moneyStepsRoundToThousands() {
+        val steps = GoalMath.plan(0.0, 1e7, "₹", today, march2027, "monthly")
+        assertEquals(0.0, steps.first().second % 1000.0, 0.0)
+        assertTrue(steps.zipWithNext().all { (a, b) -> b.second > a.second })
+    }
+
+    @Test fun crossingDependsOnDirection() {
+        val down = GoalMath.goesDown("kg", start = 95.0, target = 80.0)
+        assertTrue(down)
+        assertTrue(GoalMath.crosses(90.0, 89.6, down))
+        assertFalse(GoalMath.crosses(90.0, 90.4, down))
+        assertFalse(GoalMath.goesDown("₹", start = 0.0, target = 1e7))
+        assertTrue(GoalMath.crosses(5e5, 5.2e5, down = false))
+    }
+
+    @Test fun oneCheckpointIsNext() {
+        val states = GoalMath.checkpointStates(
+            listOf(
+                LocalDate.of(2026, 9, 1) to true,
+                LocalDate.of(2026, 9, 16) to false,
+                LocalDate.of(2026, 10, 1) to false,
+                LocalDate.of(2026, 10, 16) to false,
+            ),
+            today,
+        )
+        assertEquals(
+            listOf(
+                GoalMath.CheckpointState.HIT,
+                GoalMath.CheckpointState.MISSED,
+                GoalMath.CheckpointState.NEXT,
+                GoalMath.CheckpointState.LATER,
+            ),
+            states,
+        )
+    }
 }

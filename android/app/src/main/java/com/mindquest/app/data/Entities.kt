@@ -143,11 +143,44 @@ data class GoalEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * A mini goal on the way to a main one: "90 kg by 1 October" inside "80 kg by March 2027".
+ *
+ * Either set by hand or laid out by a plan — weekly, half-monthly or monthly steps from where
+ * you are now to the target. [planned] keeps the two apart, so redoing a plan replaces only
+ * its own steps and never one you set yourself. [reachedAt] is stamped the first time a
+ * reading crosses it on or before its date, which is also when its XP is paid — once.
+ */
+@Entity(tableName = "goal_checkpoints", indices = [Index("goalId")])
+@Serializable
+data class GoalCheckpointEntity(
+    @PrimaryKey val id: String,
+    val goalId: String,
+    val value: Double,
+    val dueDate: String, // ISO yyyy-MM-dd
+    val planned: Boolean = false,
+    val reachedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 /** A number to reach by a date, as opposed to a story arc of milestones. */
 val GoalEntity.isTarget: Boolean get() = targetValue != null || changeValue != null
 
 /** The check-in cadence with its default applied. */
 val GoalEntity.cadence: String get() = checkinCadence ?: "monthly"
+
+/**
+ * The main goal a checkpoint line belongs to: an active target goal in the same unit whose
+ * deadline is still after the checkpoint's date. "90 kg by 1 October" belongs to "80 kg by
+ * March 2027"; with two kg goals, the one ending soonest is the nearer ambition.
+ */
+fun goalForCheckpoint(cp: com.mindquest.app.domain.GoalParse.Checkpoint, goals: List<GoalEntity>): GoalEntity? =
+    goals
+        .filter { it.status == "active" && it.isTarget && it.unit == cp.unit }
+        .mapNotNull { g -> g.deadline?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }?.let { g to it } }
+        .filter { (_, deadline) -> cp.date.isBefore(deadline) }
+        .minByOrNull { (_, deadline) -> deadline }
+        ?.first
 
 /**
  * One reading against a target goal: the scales on the 1st, the savings total at month end.

@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.AttachmentEntity
 import com.mindquest.app.data.FolderEntity
+import com.mindquest.app.data.goalForCheckpoint
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
 import com.mindquest.app.domain.Cadences
@@ -78,7 +79,14 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val goalGuess = remember(input, customFolder) {
         if (customFolder != null) null else GoalParse.detect(input)
     }
-    val asGoal = goalGuess != null && !keepAsNote
+    // "90 kg by 1st October" with an 80 kg goal running is a checkpoint on the way to it.
+    val allGoals by repo.observeGoals().collectAsState(emptyList())
+    val checkpointGuess = remember(input, customFolder, allGoals) {
+        if (customFolder != null) null
+        else GoalParse.checkpoint(input)?.let { cp -> goalForCheckpoint(cp, allGoals)?.let { cp to it } }
+    }
+    val asCheckpoint = checkpointGuess != null && !keepAsNote
+    val asGoal = !asCheckpoint && goalGuess != null && !keepAsNote
     val folderGuess = remember(input, customFolder, folder, customFolders) {
         if (customFolder != null || folder != null) null
         else FolderMatch.best(input, customFolders.map { it.name })?.let { customFolders[it] }
@@ -280,7 +288,19 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 
         // Where this line will go, shown before it goes there. Each guess is one tap to undo.
         if (input.isNotBlank()) {
-            if (asGoal && goalGuess != null) {
+            if (asCheckpoint && checkpointGuess != null) {
+                val (cp, main) = checkpointGuess
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by ${Cadences.formatDay(cp.date)} → ${main.title}",
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { keepAsNote = true }) {
+                        Text("keep as note", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else if (asGoal && goalGuess != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "🎯 Goal: ${goalGuess.title} by ${Cadences.formatTarget(goalGuess.deadline.toString())} → Goals",
@@ -361,6 +381,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 onClick = {
                     val raw = input.trim()
                     val goal = if (asGoal) goalGuess else null
+                    val checkpoint = if (asCheckpoint) checkpointGuess else null
                     // A date typed into the line counts unless it was dismissed or a time was
                     // picked with the clock, which always wins.
                     val typedDate = dateGuess.takeIf { it.dueAt != null && pendingRemind == null && !skipDate }
@@ -374,6 +395,15 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     input = ""; pendingRemind = null; categoryChosen = false
                     if (at != null) ensureNotifPermission()
                     scope.launch {
+                        if (checkpoint != null) {
+                            val (cp, main) = checkpoint
+                            val met = repo.addCheckpoint(main.id, cp.value, cp.date)
+                            notify(
+                                "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by ${Cadences.formatDay(cp.date)} → ${main.title}" +
+                                    if (met) " · already there ✓" else "",
+                            )
+                            return@launch
+                        }
                         if (goal != null) {
                             repo.createTargetGoal(goal, narrative = raw)
                             ensureNotifPermission()

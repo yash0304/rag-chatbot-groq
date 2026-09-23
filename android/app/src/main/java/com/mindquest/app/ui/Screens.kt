@@ -90,6 +90,13 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
     val progress by repo.observeGoalProgress().collectAsState(emptyList())
     val activeGoals = goals.filter { it.isTarget && it.status == "active" }
     val readings = progress.groupBy { it.goalId }
+    val checkpoints by repo.observeCheckpoints().collectAsState(emptyList())
+    val today = java.time.LocalDate.now()
+    // The next open checkpoint per goal — the week's real target.
+    val nextCheckpoint = checkpoints
+        .filter { it.reachedAt == null && !java.time.LocalDate.parse(it.dueDate).isBefore(today) }
+        .groupBy { it.goalId }
+        .mapValues { (_, cps) -> cps.minByOrNull { it.dueDate } }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -142,6 +149,13 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity) {
                         },
                         style = MaterialTheme.typography.labelSmall, color = Muted,
                     )
+                    nextCheckpoint[g.id]?.let { cp ->
+                        Text(
+                            "🏁 Next: ${GoalParse.format(cp.value, unit)} by " +
+                                Cadences.formatDay(java.time.LocalDate.parse(cp.dueDate)),
+                            style = MaterialTheme.typography.labelSmall, color = Rune,
+                        )
+                    }
                 } }
             }
         }

@@ -104,6 +104,29 @@ class GoalParseTest {
         assertNull(goal("save 50k rupees by March 20th"))
     }
 
+    // ---- checkpoints: mini goals inside a main one ----
+
+    @Test fun ninetyKgsByOctoberFirstIsACheckpoint() {
+        val c = GoalParse.checkpoint("90 kgs by October 1st", today)!!
+        assertEquals(90.0, c.value, 0.0)
+        assertEquals("kg", c.unit)
+        assertEquals(LocalDate.of(2026, 10, 1), c.date)
+        // …and too close to be a main goal on its own.
+        assertNull(goal("90 kgs by October 1st"))
+    }
+
+    @Test fun checkpointsTakeMonthsAndDaysAlike() {
+        assertEquals(LocalDate.of(2026, 12, 31), GoalParse.checkpoint("85 kg by December", today)!!.date)
+        assertEquals(LocalDate.of(2026, 10, 1), GoalParse.checkpoint("90 kg by 1st October", today)!!.date)
+        assertEquals(5e5, GoalParse.checkpoint("5 lakh by Diwali 12th November", today)!!.value, 0.0)
+    }
+
+    @Test fun errandsAndChangesAreNotCheckpoints() {
+        assertNull(GoalParse.checkpoint("buy 2 kg sugar by Friday", today))
+        assertNull(GoalParse.checkpoint("lose 2 kg by Friday", today))
+        assertNull(GoalParse.checkpoint("90 kg", today))
+    }
+
     // ---- formatting and reading check-ins ----
 
     @Test fun rupeesAreWrittenTheIndianWay() {

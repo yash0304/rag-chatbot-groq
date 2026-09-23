@@ -14,6 +14,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.mindquest.app.data.GoalCheckpointEntity
 import com.mindquest.app.data.GoalEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.cadence
@@ -71,7 +72,12 @@ object GoalCheckins {
     private val dayFmt = SimpleDateFormat("d MMM", Locale.getDefault())
 
     /** The lines a check-in shows: deadline, last reading, and the pace from here. */
-    fun summary(goal: GoalEntity, readings: List<Pair<Double, Long>>, today: LocalDate = LocalDate.now()): String {
+    fun summary(
+        goal: GoalEntity,
+        readings: List<Pair<Double, Long>>,
+        checkpoints: List<GoalCheckpointEntity> = emptyList(),
+        today: LocalDate = LocalDate.now(),
+    ): String {
         val unit = goal.unit ?: ""
         val deadline = goal.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         return buildString {
@@ -85,6 +91,13 @@ object GoalCheckins {
             } else {
                 append("\nNo reading yet — reply with where you are now.")
             }
+            // The nearest checkpoint is the concrete ask for this check-in.
+            checkpoints
+                .filter { it.reachedAt == null && !LocalDate.parse(it.dueDate).isBefore(today) }
+                .minByOrNull { it.dueDate }
+                ?.let { cp ->
+                    append("\n🏁 Next checkpoint: ${GoalParse.format(cp.value, unit)} by ${Cadences.formatDay(LocalDate.parse(cp.dueDate))}")
+                }
             if (deadline != null) {
                 val s = GoalMath.status(goal.targetValue, unit, deadline, readings.map { it.first }, today)
                 s.perMonth?.let { append("\nPace needed: ${GoalMath.describePace(it, unit)}") }
@@ -93,10 +106,16 @@ object GoalCheckins {
     }
 
     /** Post the check-in, with a reply box for the number and a tap that opens the app. */
-    fun post(context: Context, goal: GoalEntity, readings: List<Pair<Double, Long>>, heading: String? = null) {
+    fun post(
+        context: Context,
+        goal: GoalEntity,
+        readings: List<Pair<Double, Long>>,
+        checkpoints: List<GoalCheckpointEntity> = emptyList(),
+        heading: String? = null,
+    ) {
         if (!Reminders.hasPermission(context)) return
         Reminders.ensureChannel(context)
-        val body = summary(goal, readings)
+        val body = summary(goal, readings, checkpoints)
         val unit = goal.unit ?: ""
 
         val reply = RemoteInput.Builder(GoalActionReceiver.KEY_VALUE)
@@ -129,7 +148,8 @@ object GoalCheckins {
             .setAutoCancel(true)
             .apply { open?.let { setContentIntent(it) } }
             .addAction(
-                NotificationCompat.Action.Builder(0, "Log this month's number", replyIntent)
+                // "this week's" with a weekly plan, "this month's" by default.
+                NotificationCompat.Action.Builder(0, "Log this ${Cadences.of(goal.cadence).unit}'s number", replyIntent)
                     .addRemoteInput(reply)
                     .build(),
             )
@@ -177,7 +197,7 @@ class GoalCheckinWorker(appContext: Context, params: WorkerParameters) :
         val lastDay = readings.lastOrNull()?.let { Instant.ofEpochMilli(it.second).atZone(zone).toLocalDate() }
         val loggedThisPeriod = lastDay != null &&
             Cadences.periodIndex(goal.cadence, lastDay) == Cadences.periodIndex(goal.cadence, today)
-        if (!loggedThisPeriod) GoalCheckins.post(applicationContext, goal, readings)
+        if (!loggedThisPeriod) GoalCheckins.post(applicationContext, goal, readings, repo.checkpointsOf(goalId))
 
         GoalCheckins.rearm(applicationContext, goalId, minute, goal.cadence)
         return Result.success()
@@ -205,7 +225,10 @@ class GoalActionReceiver : BroadcastReceiver() {
                 val value = GoalParse.parseValue(typed, unit)
                 if (value == null) {
                     val readings = repo.goalProgress(goalId).map { it.value to it.createdAt }
-                    GoalCheckins.post(app, goal, readings, heading = "Couldn't read a number from “$typed” — try again")
+                    GoalCheckins.post(
+                        app, goal, readings, repo.checkpointsOf(goalId),
+                        heading = "Couldn't read a number from “$typed” — try again",
+                    )
                     return@launch
                 }
                 val r = repo.logGoalProgress(goalId, value)
@@ -214,7 +237,9 @@ class GoalActionReceiver : BroadcastReceiver() {
                     GoalCheckins.postResult(app, goalId, "🎉 ${goal.title} — reached!", "$logged logged. +${r.xpAwarded} XP")
                 } else {
                     val left = r.status?.remaining?.let { " · ${GoalMath.describeRemaining(it, unit)}" } ?: ""
-                    GoalCheckins.postResult(app, goalId, "✓ $logged logged$left", goal.title)
+                    val checkpoint = r.checkpointsHit.lastOrNull()
+                        ?.let { "🏁 Checkpoint ${GoalParse.format(it.value, unit)} hit! " } ?: ""
+                    GoalCheckins.postResult(app, goalId, "✓ $logged logged$left", checkpoint + goal.title)
                 }
             } catch (e: Exception) {
                 Log.w("GoalCheckin", "Couldn't log reply", e)

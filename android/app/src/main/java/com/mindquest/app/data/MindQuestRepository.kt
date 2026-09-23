@@ -90,9 +90,18 @@ data class CaptureResult(
     val folderName: String? = null,
     /** Set when the line was a goal and went to Goals instead of the Inbox. */
     val goal: GoalParse.Goal? = null,
+    /** Set when the line was a checkpoint and was added to the goal named [checkpointOf]. */
+    val checkpoint: GoalParse.Checkpoint? = null,
+    val checkpointOf: String? = null,
+    val checkpointMet: Boolean = false,
 ) {
     /** One line saying where it went — for the toast after the mic, the widget or Share. */
     fun describe(stamp: (Long) -> String): String {
+        checkpoint?.let { cp ->
+            val date = cp.date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
+            return "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by $date → $checkpointOf" +
+                if (checkpointMet) " · already there ✓" else ""
+        }
         goal?.let {
             return "🎯 ${it.title} by ${Cadences.formatTarget(it.deadline.toString())} → Goals · check-in on the 1st"
         }
@@ -179,6 +188,8 @@ data class ExportBundle(
     val attachments: List<AttachmentEntity> = emptyList(),
     /** Readings against target goals — the weigh-ins, the savings totals. */
     val goalProgress: List<GoalProgressEntity> = emptyList(),
+    /** Mini goals inside target goals, planned and hand-set. */
+    val goalCheckpoints: List<GoalCheckpointEntity> = emptyList(),
 )
 
 /**
@@ -535,6 +546,8 @@ class MindQuestRepository(private val context: Context) {
         val reached: Boolean = false,
         val levelUp: Boolean = false,
         val status: GoalMath.Status? = null,
+        /** Checkpoints this reading got to for the first time. */
+        val checkpointsHit: List<GoalCheckpointEntity> = emptyList(),
     )
 
     /**
@@ -566,6 +579,8 @@ class MindQuestRepository(private val context: Context) {
             var xp = 0
             var levelUp = false
             award("goal_checkin", GOAL_CHECKIN_XP, refId = goalId).let { xp += it.xpAwarded; levelUp = it.levelUp }
+            val hit = scoreCheckpoints(goal, value)
+            xp += hit.size * Catalogs.Xp.MILESTONE
             val reached = status.reached && goal.status == "active"
             if (reached) {
                 goalDao.upsertGoal(goal.copy(status = "completed"))
@@ -574,10 +589,94 @@ class MindQuestRepository(private val context: Context) {
                     xp += it.xpAwarded; levelUp = levelUp || it.levelUp
                 }
             }
-            GoalLogResult(xp, reached, levelUp, status)
+            GoalLogResult(xp, reached, levelUp, status, hit)
         }
 
     suspend fun deleteGoalProgress(entryId: String) = goalDao.deleteProgress(entryId)
+
+    // ---------- checkpoints: mini goals inside a target goal ----------
+
+    fun observeCheckpoints(): Flow<List<GoalCheckpointEntity>> = goalDao.observeAllCheckpoints()
+    suspend fun checkpointsOf(goalId: String): List<GoalCheckpointEntity> = goalDao.checkpointsOf(goalId)
+
+    /** Direction and start of a goal, worked out from its readings so far. */
+    private suspend fun directionOf(goal: GoalEntity, reference: Double? = null): Boolean {
+        val start = if (GoalParse.accumulates(goal.unit ?: "")) 0.0 else goalDao.progressOf(goal.id).firstOrNull()?.value
+        val target = goal.targetValue ?: return (goal.changeValue ?: 0.0) < 0
+        return GoalMath.goesDown(goal.unit ?: "", start, target, reference)
+    }
+
+    /**
+     * Add a mini goal by hand — "90 kg by 1 October". If the latest reading already gets
+     * there it is marked reached straight away (without XP: there's nothing to reward in
+     * setting a bar you've already cleared).
+     */
+    suspend fun addCheckpoint(goalId: String, value: Double, due: LocalDate): Boolean {
+        val goal = goalDao.getGoal(goalId) ?: return false
+        val latest = goalDao.progressOf(goalId).lastOrNull()?.value
+        val already = latest != null && GoalMath.crosses(value, latest, directionOf(goal, reference = value))
+        goalDao.upsertCheckpoint(
+            GoalCheckpointEntity(
+                id = UUID.randomUUID().toString(), goalId = goalId, value = value,
+                dueDate = due.toString(), planned = false,
+                reachedAt = if (already) System.currentTimeMillis() else null,
+            ),
+        )
+        return already
+    }
+
+    suspend fun deleteCheckpoint(id: String) = goalDao.deleteCheckpoint(id)
+
+    /**
+     * Split a goal into steps: a checkpoint every week, half-month or month on a straight
+     * line from today's reading to the target. Redoing it replaces the plan's open steps and
+     * leaves your own checkpoints alone. The check-in moves to the same rhythm — weekly steps
+     * want a weekly look — and is switched on if it was off. Returns the number of steps, or
+     * null when there is no reading yet to start the line from.
+     */
+    suspend fun planCheckpoints(goalId: String, cadence: String): Int? = db.withTransaction {
+        val goal = goalDao.getGoal(goalId) ?: return@withTransaction null
+        val target = goal.targetValue ?: return@withTransaction null
+        val deadline = goal.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: return@withTransaction null
+        val unit = goal.unit ?: ""
+        val start = goalDao.progressOf(goalId).lastOrNull()?.value
+            ?: if (GoalParse.accumulates(unit)) 0.0 else return@withTransaction null
+        goalDao.deleteOpenPlannedOf(goalId)
+        val steps = GoalMath.plan(start, target, unit, LocalDate.now(), deadline, cadence)
+        steps.forEach { (date, value) ->
+            goalDao.upsertCheckpoint(
+                GoalCheckpointEntity(
+                    id = UUID.randomUUID().toString(), goalId = goalId, value = value,
+                    dueDate = date.toString(), planned = true,
+                ),
+            )
+        }
+        setGoalCheckin(goalId, goal.checkinMinuteOfDay ?: DEFAULT_CHECKIN_MINUTE, cadence)
+        steps.size
+    }
+
+    suspend fun clearPlan(goalId: String) = goalDao.deleteOpenPlannedOf(goalId)
+
+    /**
+     * After a reading: stamp every open checkpoint it gets to, and pay for each once. Only
+     * checkpoints still in date count — reaching October's number in November is progress,
+     * and the main goal will reward it, but it isn't hitting the checkpoint.
+     */
+    private suspend fun scoreCheckpoints(goal: GoalEntity, value: Double): List<GoalCheckpointEntity> {
+        val today = LocalDate.now()
+        val down = directionOf(goal)
+        val hit = goalDao.checkpointsOf(goal.id).filter { cp ->
+            cp.reachedAt == null &&
+                !LocalDate.parse(cp.dueDate).isBefore(today) &&
+                GoalMath.crosses(cp.value, value, down)
+        }
+        hit.forEach { cp ->
+            goalDao.upsertCheckpoint(cp.copy(reachedAt = System.currentTimeMillis()))
+            award("checkpoint_hit", Catalogs.Xp.MILESTONE, refId = cp.id)
+        }
+        return hit
+    }
 
     /** Change a target goal's name, target, unit or deadline. */
     suspend fun editTargetGoal(id: String, title: String, target: Double?, unit: String, deadline: String?) {
@@ -612,6 +711,7 @@ class MindQuestRepository(private val context: Context) {
         attachmentDao.of("goal", id).forEach { PhotoStore.delete(it.path) }
         attachmentDao.deleteAllOf("goal", id)
         goalDao.deleteProgressOf(id)
+        goalDao.deleteCheckpointsOf(id)
         goalDao.deleteMilestonesOf(id)
         goalDao.deleteGoal(id)
     }
@@ -1080,6 +1180,7 @@ class MindQuestRepository(private val context: Context) {
         folders = folderDao.all(),
         attachments = attachmentDao.allAttachments(),
         goalProgress = goalDao.allProgress(),
+        goalCheckpoints = goalDao.allCheckpoints(),
     )
 
     suspend fun exportJson(): String {
@@ -1140,6 +1241,7 @@ class MindQuestRepository(private val context: Context) {
         bundle.folders.forEach { folderDao.upsert(it) }
         bundle.attachments.forEach { attachmentDao.upsert(it) }
         bundle.goalProgress.forEach { goalDao.upsertProgress(it) }
+        bundle.goalCheckpoints.forEach { goalDao.upsertCheckpoint(it) }
         seedIfEmpty() // restore catalog rows if the bundle predates them
         // Restored rows carry their reminder times, but the alarms themselves lived in
         // WorkManager, which a restore onto a new phone starts without. Rebuild them.
@@ -1473,6 +1575,18 @@ class MindQuestRepository(private val context: Context) {
         category: String? = null,
     ): CaptureResult {
         if (folderId == null) {
+            // A level by a date, in the unit of a goal already running, is a checkpoint on
+            // the way to it — "90 kg by 1st October" inside "80 kg by March 2027" — not a
+            // second goal and not an errand. Checked before goals for exactly that reason.
+            GoalParse.checkpoint(spoken)?.let { cp ->
+                goalForCheckpoint(cp, goalDao.allGoals())?.let { main ->
+                    val met = addCheckpoint(main.id, cp.value, cp.date)
+                    return CaptureResult(
+                        main.id, GoalParse.format(cp.value, cp.unit), null, "general", null,
+                        checkpoint = cp, checkpointOf = main.title, checkpointMet = met,
+                    )
+                }
+            }
             GoalParse.detect(spoken)?.let { goal ->
                 val id = createTargetGoal(goal, narrative = spoken)
                 return CaptureResult(id, goal.title, null, "general", null, goal = goal)

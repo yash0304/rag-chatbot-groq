@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.GoalCheckpointEntity
 import com.mindquest.app.data.GoalEntity
 import com.mindquest.app.data.GoalProgressEntity
 import com.mindquest.app.data.MindQuestRepository
@@ -44,6 +45,8 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val milestones by repo.observeAllMilestones().collectAsState(emptyList())
     val progress by repo.observeGoalProgress().collectAsState(emptyList())
     val photos by repo.observeAttachments("goal").collectAsState(emptyList())
+    val checkpoints by repo.observeCheckpoints().collectAsState(emptyList())
+    val checkpointsByGoal = checkpoints.groupBy { it.goalId }
     val readingsByGoal = progress.groupBy { it.goalId }
     val photosByGoal = photos.groupBy { it.ownerId }
     val msByGoal = milestones.groupBy { it.goalId }
@@ -68,6 +71,9 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         if (r.reached) "🎉 ${goal.title} — reached! +${r.xpAwarded} XP"
                         else buildString {
                             append("Logged ${GoalParse.format(value, unit)}")
+                            r.checkpointsHit.lastOrNull()?.let {
+                                append(" · 🏁 checkpoint ${GoalParse.format(it.value, unit)} hit!")
+                            }
                             r.status?.remaining?.let { append(" · ${GoalMath.describeRemaining(it, unit)}") }
                             append(" · +${r.xpAwarded} XP")
                         },
@@ -127,6 +133,7 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             TargetGoalCard(
                 goal = goal,
                 readings = readingsByGoal[goal.id].orEmpty(),
+                checkpoints = checkpointsByGoal[goal.id].orEmpty(),
                 photos = photosByGoal[goal.id].orEmpty(),
                 repo = repo,
                 notify = notify,
@@ -228,6 +235,7 @@ private fun NewGoalCard(repo: MindQuestRepository, notify: (String) -> Unit) {
 private fun TargetGoalCard(
     goal: GoalEntity,
     readings: List<GoalProgressEntity>,
+    checkpoints: List<GoalCheckpointEntity>,
     photos: List<com.mindquest.app.data.AttachmentEntity>,
     repo: MindQuestRepository,
     notify: (String) -> Unit,
@@ -297,6 +305,8 @@ private fun TargetGoalCard(
             Button(onClick = onLog) { Text(if (readings.isEmpty()) "Log where I am now" else "Log progress") }
         }
 
+        CheckpointSection(goal, checkpoints, readings, done, repo, notify)
+
         // Readings, newest first. Three is enough to see the direction; the rest on request.
         val newestFirst = readings.asReversed()
         (if (showAll) newestFirst else newestFirst.take(3)).forEach { r ->
@@ -357,6 +367,7 @@ private fun checkinWhen(cadence: String): String = when (cadence) {
     "daily" -> "every day"
     "weekdays" -> "every weekday"
     "weekly" -> "every Monday"
+    "halfmonthly" -> "on the 1st and 16th"
     "monthly" -> "on the 1st of each month"
     "quarterly" -> "on the 1st of each quarter"
     "halfyearly" -> "on 1 Jan and 1 Jul"
@@ -508,4 +519,196 @@ private fun StoryArcCard(
             }
         }
     } }
+}
+
+
+/**
+ * Mini goals inside the main one. The next checkpoint leads, because "88 kg by 1 November"
+ * is something to act on this week in a way that "80 kg by March 2027" never quite is.
+ */
+@Composable
+private fun CheckpointSection(
+    goal: GoalEntity,
+    checkpoints: List<GoalCheckpointEntity>,
+    readings: List<GoalProgressEntity>,
+    done: Boolean,
+    repo: MindQuestRepository,
+    notify: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val unit = goal.unit ?: ""
+    var adding by remember { mutableStateOf(false) }
+    var showAll by remember { mutableStateOf(false) }
+    val states = GoalMath.checkpointStates(
+        checkpoints.map { LocalDate.parse(it.dueDate) to (it.reachedAt != null) },
+    )
+    val rows = checkpoints.zip(states)
+    val latest = readings.lastOrNull()?.value
+
+    if (adding) {
+        AddCheckpointDialog(
+            goal = goal,
+            onDismiss = { adding = false },
+            onAdd = { value, date ->
+                adding = false
+                scope.launch {
+                    val met = repo.addCheckpoint(goal.id, value, date)
+                    notify(
+                        "🏁 Checkpoint ${GoalParse.format(value, unit)} by ${Cadences.formatDay(date)}" +
+                            if (met) " — you're already there ✓" else " added.",
+                    )
+                }
+            },
+        )
+    }
+
+    if (checkpoints.isNotEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        rows.firstOrNull { it.second == GoalMath.CheckpointState.NEXT }?.let { (cp, _) ->
+            Text(
+                buildString {
+                    append("🏁 Next: ${GoalParse.format(cp.value, unit)} by ${Cadences.formatDay(LocalDate.parse(cp.dueDate))}")
+                    latest?.let { append(" · ${GoalMath.describeRemaining(cp.value - it, unit)}") }
+                },
+                style = MaterialTheme.typography.bodySmall, color = Rune, fontWeight = FontWeight.Bold,
+            )
+        }
+        val hit = states.count { it == GoalMath.CheckpointState.HIT }
+        val missed = states.count { it == GoalMath.CheckpointState.MISSED }
+        val ahead = states.size - hit - missed
+        Text(
+            "Checkpoints: ✓ $hit hit · ✗ $missed missed · $ahead ahead",
+            style = MaterialTheme.typography.labelSmall, color = Muted,
+        )
+        // The last two behind you and the next three ahead: enough to see the trend and
+        // what's coming, without a weekly plan's twenty-seven rows filling the card.
+        val nextIndex = rows.indexOfFirst { it.second == GoalMath.CheckpointState.NEXT }.let { if (it < 0) rows.size else it }
+        val visible = if (showAll) rows else rows.subList((nextIndex - 2).coerceAtLeast(0), (nextIndex + 3).coerceAtMost(rows.size))
+        visible.forEach { (cp, state) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val (mark, color) = when (state) {
+                    GoalMath.CheckpointState.HIT -> "✓" to Verdant
+                    GoalMath.CheckpointState.MISSED -> "✗" to Ember
+                    GoalMath.CheckpointState.NEXT -> "▶" to Rune
+                    GoalMath.CheckpointState.LATER -> "○" to Muted
+                }
+                Text(
+                    "$mark ${GoalParse.format(cp.value, unit)} by ${Cadences.formatDay(LocalDate.parse(cp.dueDate))}" +
+                        if (cp.planned) "" else "  · yours",
+                    style = MaterialTheme.typography.labelSmall, color = color,
+                    fontWeight = if (state == GoalMath.CheckpointState.NEXT) FontWeight.Bold else null,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { scope.launch { repo.deleteCheckpoint(cp.id) } },
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) { Text("✕", style = MaterialTheme.typography.labelSmall, color = Muted) }
+            }
+        }
+        if (rows.size > visible.size || showAll) {
+            TextButton(onClick = { showAll = !showAll }) {
+                Text(if (showAll) "Show fewer" else "All ${rows.size} checkpoints", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+
+    if (done) return
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(onClick = { adding = true }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+            Text("+ Checkpoint", style = MaterialTheme.typography.labelSmall)
+        }
+        if (checkpoints.any { it.planned && it.reachedAt == null }) {
+            TextButton(onClick = {
+                scope.launch { repo.clearPlan(goal.id); notify("Plan cleared. Your own checkpoints are kept.") }
+            }) { Text("clear plan", style = MaterialTheme.typography.labelSmall, color = Muted) }
+        }
+    }
+    // One tap lays the whole road out: a checkpoint every week, half-month or month, on a
+    // straight line from today's reading to the target.
+    Text("Split into steps:", style = MaterialTheme.typography.labelSmall, color = Muted)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("weekly", "halfmonthly", "monthly").forEach { c ->
+            AssistChip(
+                onClick = {
+                    scope.launch {
+                        val n = repo.planCheckpoints(goal.id, c)
+                        notify(
+                            when {
+                                n == null -> "Log where you are now first — the steps start from today's number."
+                                n == 0 -> "The deadline is too close for ${Cadences.of(c).label} steps."
+                                else -> "$n ${Cadences.of(c).label} checkpoints laid out. Check-in is now ${Cadences.of(c).label} too."
+                            },
+                        )
+                    }
+                },
+                label = { Text(Cadences.of(c).label, style = MaterialTheme.typography.labelSmall) },
+            )
+        }
+    }
+}
+
+/** "90 kg by 1st October" — said or typed, or a number and a date picked by hand. */
+@Composable
+private fun AddCheckpointDialog(
+    goal: GoalEntity,
+    onDismiss: () -> Unit,
+    onAdd: (Double, LocalDate) -> Unit,
+) {
+    val context = LocalContext.current
+    val unit = goal.unit ?: ""
+    var text by remember { mutableStateOf("") }
+    var pickedDate by remember { mutableStateOf<LocalDate?>(null) }
+    val value = remember(text) { GoalParse.parseValue(text, unit) }
+    val readDate = remember(text) { GoalParse.dateOf(text) }
+    val date = pickedDate ?: readDate
+    val deadline = goal.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    val problem = when {
+        date == null -> null
+        date.isBefore(LocalDate.now()) -> "That date has passed."
+        deadline != null && !date.isBefore(deadline) -> "That's on or after the goal's own deadline."
+        else -> null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Checkpoint for ${goal.title}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        text, { text = it },
+                        label = { Text("Number and date") },
+                        placeholder = { Text(if (unit == "₹") "10 lakh by December" else "90 kg by 1st October") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    MicButton { text = it }
+                }
+                TextButton(onClick = { pickDate(context, date?.toString()) { pickedDate = LocalDate.parse(it) } }) {
+                    Text(
+                        date?.let { "📅 by ${Cadences.formatDay(it)} ${it.year}" } ?: "📅 Pick a date",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                if (value != null && date != null) {
+                    Text(
+                        "= ${GoalParse.format(value, unit)} by ${Cadences.formatDay(date)}",
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                    )
+                }
+                problem?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Ember) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = value != null && date != null && problem == null,
+                onClick = { if (value != null && date != null) onAdd(value, date) },
+            ) { Text("Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

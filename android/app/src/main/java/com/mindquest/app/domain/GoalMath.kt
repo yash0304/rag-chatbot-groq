@@ -1,6 +1,7 @@
 package com.mindquest.app.domain
 
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
 /**
@@ -80,4 +81,72 @@ object GoalMath {
     /** "₹85 lakh to go", "4.5 kg to go". */
     fun describeRemaining(remaining: Double, unit: String): String =
         "${GoalParse.format(abs(remaining), unit)} to go"
+
+    // ---------- checkpoints: mini goals inside a main goal ----------
+
+    /** Which way the number has to move: down for losing weight, up for everything else. */
+    fun goesDown(unit: String, start: Double?, target: Double, reference: Double? = null): Boolean =
+        !GoalParse.accumulates(unit) && (start ?: reference ?: target) > target
+
+    /** Has [reading] got as far as [checkpoint], in the goal's direction? */
+    fun crosses(checkpoint: Double, reading: Double, down: Boolean): Boolean =
+        if (down) reading <= checkpoint + 1e-9 else reading >= checkpoint - 1e-9
+
+    /**
+     * Lay a straight line from where you are today to the target on its deadline, and put a
+     * checkpoint on it at every step of [cadence] — each Monday, the 1st and 16th, or the 1st
+     * of the month. The deadline itself isn't a checkpoint: that is the main goal.
+     *
+     * A straight line isn't how bodies or bank balances actually move, but it is the honest
+     * baseline: it says what "on track" means this week without pretending to know more.
+     */
+    fun plan(
+        start: Double,
+        target: Double,
+        unit: String,
+        from: LocalDate,
+        deadline: LocalDate,
+        cadence: String,
+        maxSteps: Int = 120,
+    ): List<Pair<LocalDate, Double>> {
+        val totalDays = ChronoUnit.DAYS.between(from, deadline).toDouble()
+        if (totalDays <= 0) return emptyList()
+        val steps = mutableListOf<Pair<LocalDate, Double>>()
+        var date = Cadences.nextPeriodStart(cadence, from)
+        while (date.isBefore(deadline) && steps.size < maxSteps) {
+            val share = ChronoUnit.DAYS.between(from, date) / totalDays
+            steps += date to roundFor(unit, start + (target - start) * share)
+            date = Cadences.nextPeriodStart(cadence, date)
+        }
+        return steps
+    }
+
+    /** Numbers a person would write down: 94.4 kg, ₹8,33,000, 12 books. */
+    fun roundFor(unit: String, value: Double): Double = when (unit) {
+        "₹" -> Math.round(value / 1000.0) * 1000.0
+        "kg", "lb", "km" -> Math.round(value * 10) / 10.0
+        else -> Math.round(value).toDouble()
+    }
+
+    enum class CheckpointState { HIT, MISSED, NEXT, LATER }
+
+    /**
+     * Status of each checkpoint, in date order. Hit when it was reached; missed when its date
+     * has gone without that; the first open one still ahead is "next" — the one that matters
+     * this week — and the rest are later.
+     */
+    fun checkpointStates(
+        checkpoints: List<Pair<LocalDate, Boolean>>, // due date, already reached
+        today: LocalDate = LocalDate.now(),
+    ): List<CheckpointState> {
+        var nextGiven = false
+        return checkpoints.map { (due, reached) ->
+            when {
+                reached -> CheckpointState.HIT
+                due.isBefore(today) -> CheckpointState.MISSED
+                !nextGiven -> { nextGiven = true; CheckpointState.NEXT }
+                else -> CheckpointState.LATER
+            }
+        }
+    }
 }

@@ -34,6 +34,8 @@ object DateParse {
         Regex("""\b(every\s+week|weekly)\b""") to "weekly",
         Regex("""\b(every\s+(6|six)\s+months|half[\s-]?yearly|twice\s+a\s+year)\b""") to "halfyearly",
         Regex("""\b(every\s+(3|three)\s+months|every\s+quarter|quarterly)\b""") to "quarterly",
+        // Before "monthly": "half monthly" contains it.
+        Regex("""\b(half[\s-]?monthly|twice\s+a\s+month|every\s+(15|fifteen)\s+days)\b""") to "halfmonthly",
         Regex("""\b(every\s+month|monthly)\b""") to "monthly",
         Regex("""\b(every\s+year|yearly|annually)\b""") to "yearly",
     )

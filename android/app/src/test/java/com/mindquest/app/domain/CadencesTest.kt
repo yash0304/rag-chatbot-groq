@@ -101,6 +101,32 @@ class CadencesTest {
         assertEquals(LocalDateTime.of(2026, 9, 14, 9, 0), at(Cadences.nextFireAt("weekdays", 9 * 60, fridayEvening)))
     }
 
+    // ---- half-monthly: the 1st and the 16th ----
+
+    @Test fun halfMonthsSplitOnTheSixteenth() {
+        val sep15 = Cadences.periodIndex("halfmonthly", LocalDate.of(2026, 9, 15))
+        val sep16 = Cadences.periodIndex("halfmonthly", LocalDate.of(2026, 9, 16))
+        val sep30 = Cadences.periodIndex("halfmonthly", LocalDate.of(2026, 9, 30))
+        val oct1 = Cadences.periodIndex("halfmonthly", LocalDate.of(2026, 10, 1))
+        assertEquals(sep15 + 1, sep16)
+        assertEquals(sep16, sep30)
+        assertEquals(sep30 + 1, oct1)
+    }
+
+    @Test fun halfMonthlyFiresOnTheFirstAndSixteenth() {
+        // Thursday 10 September → the 16th; from the 16th evening → 1 October.
+        assertEquals(LocalDateTime.of(2026, 9, 16, 9, 0), at(Cadences.nextFireAt("halfmonthly", 9 * 60, now)))
+        val sixteenthEvening = LocalDateTime.of(2026, 9, 16, 20, 0)
+        assertEquals(LocalDateTime.of(2026, 10, 1, 9, 0), at(Cadences.nextFireAt("halfmonthly", 9 * 60, sixteenthEvening)))
+    }
+
+    @Test fun halfMonthlyNotesAlternateFifteenDaysApart() {
+        val fifth = LocalDateTime.of(2026, 9, 5, 9, 0)
+        val twentieth = Cadences.advance("halfmonthly", fifth)
+        assertEquals(LocalDateTime.of(2026, 9, 20, 9, 0), twentieth)
+        assertEquals(LocalDateTime.of(2026, 10, 5, 9, 0), Cadences.advance("halfmonthly", twentieth))
+    }
+
     // ---- repeating notes ----
 
     @Test fun rentStaysOnTheFifthWhenPaidLate() {

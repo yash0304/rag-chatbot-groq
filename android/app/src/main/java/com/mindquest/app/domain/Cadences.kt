@@ -31,6 +31,9 @@ object Cadences {
         Cadence("daily", "daily", "day"),
         Cadence("weekdays", "weekdays", "day"),
         Cadence("weekly", "weekly", "week"),
+        // The 1st and the 16th: two per month on fixed dates, not every fifteen days, so it
+        // stays on the same days of the month forever.
+        Cadence("halfmonthly", "half-monthly", "half-month"),
         Cadence("monthly", "monthly", "month"),
         Cadence("quarterly", "quarterly", "quarter"),
         Cadence("halfyearly", "half-yearly", "half-year"),
@@ -49,6 +52,7 @@ object Cadences {
     fun periodIndex(cadence: String, date: LocalDate): Long = when (cadence) {
         // Epoch day 0 was a Thursday; +3 moves the boundary onto Monday.
         "weekly" -> (date.toEpochDay() + 3).floorDiv(7)
+        "halfmonthly" -> (date.year * 12L + (date.monthValue - 1)) * 2 + if (date.dayOfMonth >= 16) 1 else 0
         "monthly" -> date.year * 12L + (date.monthValue - 1)
         "quarterly" -> date.year * 4L + (date.monthValue - 1) / 3
         "halfyearly" -> date.year * 2L + (date.monthValue - 1) / 6
@@ -70,6 +74,7 @@ object Cadences {
     /** The first day of the period [date] falls in — the day the nudge is due. */
     fun periodStart(cadence: String, date: LocalDate): LocalDate = when (cadence) {
         "weekly" -> date.with(DayOfWeek.MONDAY)
+        "halfmonthly" -> date.withDayOfMonth(if (date.dayOfMonth >= 16) 16 else 1)
         "monthly" -> date.withDayOfMonth(1)
         "quarterly" -> LocalDate.of(date.year, (date.monthValue - 1) / 3 * 3 + 1, 1)
         "halfyearly" -> LocalDate.of(date.year, (date.monthValue - 1) / 6 * 6 + 1, 1)
@@ -82,6 +87,7 @@ object Cadences {
         val start = periodStart(cadence, date)
         return when (cadence) {
             "weekly" -> start.plusWeeks(1)
+            "halfmonthly" -> if (start.dayOfMonth == 1) start.withDayOfMonth(16) else start.plusMonths(1).withDayOfMonth(1)
             "monthly" -> start.plusMonths(1)
             "quarterly" -> start.plusMonths(3)
             "halfyearly" -> start.plusMonths(6)
@@ -132,6 +138,13 @@ object Cadences {
      */
     fun advance(cadence: String, from: LocalDateTime): LocalDateTime = when (cadence) {
         "weekly" -> from.plusWeeks(1)
+        // Alternates between the day you chose and fifteen days either side: the 5th and
+        // the 20th, the 1st and the 16th.
+        "halfmonthly" -> if (from.dayOfMonth <= 15) {
+            from.withDayOfMonth(minOf(from.dayOfMonth + 15, from.toLocalDate().lengthOfMonth()))
+        } else {
+            from.plusMonths(1).withDayOfMonth(from.dayOfMonth - 15)
+        }
         "monthly" -> from.plusMonths(1)
         "quarterly" -> from.plusMonths(3)
         "halfyearly" -> from.plusMonths(6)
@@ -166,6 +179,9 @@ object Cadences {
         } while (next.atZone(zone).toInstant().toEpochMilli() <= now && guard < 10_000)
         return next.atZone(zone).toInstant().toEpochMilli()
     }
+
+    /** "1 Oct" — a checkpoint's day, short enough to sit in a row. */
+    fun formatDay(date: LocalDate): String = date.format(DateTimeFormatter.ofPattern("d MMM"))
 
     /** "Mar 2027" — a target date is a month, not an appointment, so it reads as one. */
     fun formatTarget(isoDate: String): String = runCatching {
