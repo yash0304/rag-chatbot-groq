@@ -26,6 +26,7 @@ import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.DateParse
 import com.mindquest.app.domain.FolderMatch
 import com.mindquest.app.domain.GoalParse
+import com.mindquest.app.domain.HabitParse
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -87,6 +88,10 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     }
     val asCheckpoint = checkpointGuess != null && !keepAsNote
     val asGoal = !asCheckpoint && goalGuess != null && !keepAsNote
+    val habitGuess = remember(input, customFolder) {
+        if (customFolder != null) null else HabitParse.detect(input)
+    }
+    val asHabit = !asCheckpoint && !asGoal && habitGuess != null && !keepAsNote
     val folderGuess = remember(input, customFolder, folder, customFolders) {
         if (customFolder != null || folder != null) null
         else FolderMatch.best(input, customFolders.map { it.name })?.let { customFolders[it] }
@@ -188,7 +193,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 folder != null ->
                     "Showing ${Categories.of(folder).label}. Reminders stay exactly as you set them."
                 else ->
-                    "Jot an errand or checklist item. Add a reminder, or turn it into a quest."
+                    "Jot anything — errands, reminders, habits. ★ what matters: it pays more XP and shows on Home."
             },
             style = MaterialTheme.typography.bodySmall, color = Muted,
         )
@@ -221,6 +226,11 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Habits sit above the to-do list: they're what today is made of, and they're
+            // ticked once per day or week rather than once and for all.
+            if (customFolder == null && folder == null) {
+                item { HabitsBlock(repo, notify) }
+            }
             if (notes.isEmpty()) {
                 item {
                     Text(
@@ -242,9 +252,13 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     onRemovePhoto = { scope.launch { repo.deleteAttachment(it.id) } },
                     onToggleDone = {
                         scope.launch {
+                            val xp = repo.xpFor(note)
+                            val firstTime = !note.done && note.completedAt == null
                             // A repeating note rolls forward instead of ticking; say where to.
-                            repo.setNoteDone(note.id, !note.done)?.let { next ->
-                                notify("Done — next one ${timeFmt.format(Date(next))}.")
+                            val next = repo.setNoteDone(note.id, !note.done)
+                            when {
+                                next != null -> notify("✓ +$xp XP — next one ${timeFmt.format(Date(next))}.")
+                                firstTime -> notify("✓ Done · +$xp XP")
                             }
                         }
                     },
@@ -261,10 +275,10 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     onClearRemind = {
                         scope.launch { repo.setNoteReminder(note.id, null); notify("Reminder cleared.") }
                     },
-                    onQuest = {
+                    onStar = {
                         scope.launch {
-                            if (repo.noteToQuest(note.id)) notify("Added to your quest board — complete it for XP.")
-                            else notify("Already a quest.")
+                            repo.setNoteStarred(note.id, !note.starred)
+                            if (!note.starred) notify("★ Starred — worth ${MindQuestRepository.STARRED_TASK_XP} XP when done.")
                         }
                     },
                     onArchive = {
@@ -298,6 +312,19 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     )
                     TextButton(onClick = { keepAsNote = true }) {
                         Text("keep as note", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else if (asHabit && habitGuess != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "🔁 Habit: ${habitGuess.title} · ${Cadences.of(habitGuess.cadence).label}" +
+                            (habitGuess.minuteOfDay?.let { " · nudge ${Reminders.formatTimeOfDay(it)}" } ?: "") +
+                            " · with a streak",
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { keepAsNote = true }) {
+                        Text("keep as reminder", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             } else if (asGoal && goalGuess != null) {
@@ -382,6 +409,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     val raw = input.trim()
                     val goal = if (asGoal) goalGuess else null
                     val checkpoint = if (asCheckpoint) checkpointGuess else null
+                    val habit = if (asHabit) habitGuess else null
                     // A date typed into the line counts unless it was dismissed or a time was
                     // picked with the clock, which always wins.
                     val typedDate = dateGuess.takeIf { it.dueAt != null && pendingRemind == null && !skipDate }
@@ -402,6 +430,11 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                                 "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by ${Cadences.formatDay(cp.date)} → ${main.title}" +
                                     if (met) " · already there ✓" else "",
                             )
+                            return@launch
+                        }
+                        if (habit != null) {
+                            repo.createHabitFrom(habit)
+                            notify("🔁 ${habit.title} — a ${Cadences.of(habit.cadence).label} habit. Tick it above.")
                             return@launch
                         }
                         if (goal != null) {
@@ -439,7 +472,7 @@ private fun NoteCard(
     onEdit: () -> Unit,
     onRemind: () -> Unit,
     onClearRemind: () -> Unit,
-    onQuest: () -> Unit,
+    onStar: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onCategory: (String) -> Unit,
@@ -459,6 +492,11 @@ private fun NoteCard(
                     textDecoration = if (note.done) TextDecoration.LineThrough else null,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                // A star marks a bigger task — worth 50 XP instead of 10 when ticked off. It is
+                // what a hard quest used to be, without a second list to keep it on.
+                TextButton(onClick = onStar, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text(if (note.starred) "★" else "☆", color = if (note.starred) Rune else Muted)
+                }
                 TextButton(onClick = onEdit, contentPadding = PaddingValues(horizontal = 4.dp)) {
                     Text("✎", color = Muted)
                 }
@@ -473,7 +511,6 @@ private fun NoteCard(
                         append(timeFmt.format(Date(note.createdAt)))
                         note.remindAt?.let { append("  ·  ⏰ ${timeFmt.format(Date(it))}") }
                         note.repeat?.let { append(" 🔁 ${Cadences.of(it).label}") }
-                        if (note.questId != null) append("  ·  ⚔️")
                         if (note.docId != null) append("  ·  📜")
                     },
                     style = MaterialTheme.typography.labelSmall, color = Muted,
@@ -489,9 +526,6 @@ private fun NoteCard(
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = if (note.remindAt == null) onRemind else onClearRemind) {
                     Text(if (note.remindAt == null) "Remind" else "Unremind", style = MaterialTheme.typography.labelSmall)
-                }
-                if (note.questId == null) {
-                    TextButton(onClick = onQuest) { Text("→ Quest", style = MaterialTheme.typography.labelSmall) }
                 }
                 if (note.docId == null) {
                     TextButton(onClick = onArchive) { Text("→ Archive", style = MaterialTheme.typography.labelSmall) }

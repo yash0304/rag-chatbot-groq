@@ -323,6 +323,13 @@ data class NoteEntity(
      * the next date, so "rent on the 5th" is one note for as long as you pay rent.
      */
     val repeat: String? = null,
+    /**
+     * A bigger task, worth more XP when ticked — what a "hard" quest used to be. The Inbox is
+     * now the one to-do list, so the reward lives on the item instead of on a second screen.
+     */
+    @ColumnInfo(defaultValue = "0") val starred: Boolean = false,
+    /** First time this was ticked off; XP is paid then and never again for the same item. */
+    val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
