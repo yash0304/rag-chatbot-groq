@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [
@@ -181,19 +182,24 @@ abstract class MindQuestDatabase : RoomDatabase() {
             }
         }
 
+        const val NAME = "mindquest.db"
+
         fun get(context: Context): MindQuestDatabase =
             instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    MindQuestDatabase::class.java,
-                    "mindquest.db",
-                )
-                    // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
-                    // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
-                    .fallbackToDestructiveMigrationOnDowngrade()
-                    .build()
-                    .also { instance = it }
+                instance ?: build(context.applicationContext).also { instance = it }
             }
+
+        private fun build(app: Context): MindQuestDatabase {
+            // Bring the file into the state the user chose (encrypted or not) before Room
+            // opens it. With encryption off — the default — this reads one flag and returns.
+            val passphrase = DbEncryption.prepare(app, app.getDatabasePath(NAME))
+            return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
+                // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
+                // as a last resort on downgrade, which shouldn't happen in normal use.
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .fallbackToDestructiveMigrationOnDowngrade()
+                .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
+                .build()
+        }
     }
 }
