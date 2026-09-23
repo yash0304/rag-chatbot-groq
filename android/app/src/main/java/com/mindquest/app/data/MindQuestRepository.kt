@@ -14,6 +14,7 @@ import com.mindquest.app.domain.GameEngine
 import com.mindquest.app.domain.GoalCheckins
 import com.mindquest.app.domain.GoalMath
 import com.mindquest.app.domain.GoalParse
+import com.mindquest.app.domain.HabitParse
 import com.mindquest.app.domain.Ingestion
 import com.mindquest.app.domain.Narrator
 import com.mindquest.app.domain.Embedders
@@ -94,9 +95,15 @@ data class CaptureResult(
     val checkpoint: GoalParse.Checkpoint? = null,
     val checkpointOf: String? = null,
     val checkpointMet: Boolean = false,
+    /** Set when the line was a habit — "walk 5000 steps every day" — with a streak. */
+    val habit: HabitParse.Habit? = null,
 ) {
     /** One line saying where it went — for the toast after the mic, the widget or Share. */
     fun describe(stamp: (Long) -> String): String {
+        habit?.let { h ->
+            return "🔁 Habit: ${h.title} · ${Cadences.of(h.cadence).label}" +
+                (h.minuteOfDay?.let { " · nudge ${Reminders.formatTimeOfDay(it)}" } ?: "") + " → Inbox"
+        }
         checkpoint?.let { cp ->
             val date = cp.date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
             return "🏁 Checkpoint ${GoalParse.format(cp.value, cp.unit)} by $date → $checkpointOf" +
@@ -129,8 +136,8 @@ data class AgendaItem(
 enum class GlobalKind(val label: String, val icon: String) {
     Note("Inbox", "📥"),
     Document("Archives", "📜"),
-    Quest("Quests", "⚔️"),
-    Habit("Missions", "🔥"),
+    Quest("Inbox", "⚔️"),
+    Habit("Inbox · habit", "🔁"),
     Goal("Goals", "🎯"),
     Folder("Inbox folder", "🗂"),
 }
@@ -267,8 +274,9 @@ class MindQuestRepository(private val context: Context) {
         return GameEngine.Stats(
             documentsReady = documentDao.readyCount(),
             documentsAny = documentDao.anyCount(),
-            questsCompleted = questDao.completedCount(),
-            epicCompleted = questDao.epicCompletedCount(),
+            // Quests became Inbox items: finished items count where finished quests did.
+            questsCompleted = questDao.completedCount() + noteDao.completedCount(),
+            epicCompleted = questDao.epicCompletedCount() + noteDao.starredCompletedCount(),
             bestStreak = habitDao.maxBestStreak() ?: 0,
             consulted = xpDao.countKind("knowledge_consulted"),
             domains = documentDao.domainCount(),
@@ -358,6 +366,13 @@ class MindQuestRepository(private val context: Context) {
             ?: return false
         return Cadences.periodIndex(habit.cadence, last) ==
             Cadences.periodIndex(habit.cadence, LocalDate.now())
+    }
+
+    /** Create a habit from a parsed line, with its nudge if a time was said. */
+    suspend fun createHabitFrom(h: HabitParse.Habit): String {
+        val id = createHabit(h.title, h.cadence)
+        h.minuteOfDay?.let { setHabitReminder(id, it) }
+        return id
     }
 
     suspend fun createHabit(
@@ -501,7 +516,7 @@ class MindQuestRepository(private val context: Context) {
     suspend fun xpLast7Days(): Long =
         xpDao.sumSince(System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000)
 
-    suspend fun completedQuestCount(): Int = questDao.completedCount()
+    suspend fun completedQuestCount(): Int = questDao.completedCount() + noteDao.completedCount()
     suspend fun habitCount(): Int = habitDao.count()
     suspend fun maxStreak(): Int = habitDao.maxStreak() ?: 0
 
@@ -813,7 +828,7 @@ class MindQuestRepository(private val context: Context) {
             xpTotal = p?.xp ?: 0,
             level = p?.level ?: 1,
             xp7d = xpLast7Days(),
-            questsCompleted = questDao.completedCount(),
+            questsCompleted = questDao.completedCount() + noteDao.completedCount(),
             habits = habitDao.count(),
             checkins = habitDao.totalCheckins(),
             bestStreak = habitDao.maxBestStreak() ?: 0,
@@ -830,7 +845,7 @@ class MindQuestRepository(private val context: Context) {
             totalXp = p?.xp ?: 0,
             bestStreakEver = habitDao.maxBestStreak() ?: 0,
             mostXpInADay = mostXpDay,
-            questsCompleted = questDao.completedCount(),
+            questsCompleted = questDao.completedCount() + noteDao.completedCount(),
             missionsCompleted = habitDao.totalCheckins(),
         )
     }
@@ -1081,7 +1096,7 @@ class MindQuestRepository(private val context: Context) {
         val stats = WeekStats(
             weekStart = ws,
             xpEarned = events.sumOf { it.amount },
-            questsCompleted = byKind["quest_completed"] ?: 0,
+            questsCompleted = (byKind["quest_completed"] ?: 0) + (byKind["task_done"] ?: 0),
             habitCheckins = byKind["habit_checkin"] ?: 0,
             documentsProcessed = byKind["document_processed"] ?: 0,
             milestones = byKind["milestone_completed"] ?: 0,
@@ -1242,6 +1257,9 @@ class MindQuestRepository(private val context: Context) {
         bundle.attachments.forEach { attachmentDao.upsert(it) }
         bundle.goalProgress.forEach { goalDao.upsertProgress(it) }
         bundle.goalCheckpoints.forEach { goalDao.upsertCheckpoint(it) }
+        // A backup from before quests joined the Inbox still has them as quests; bring them
+        // over the same way the upgrade did, so nothing restored is left with nowhere to show.
+        withContext(Dispatchers.IO) { MindQuestDatabase.foldQuestsIntoInbox(db.openHelper.writableDatabase) }
         seedIfEmpty() // restore catalog rows if the bundle predates them
         // Restored rows carry their reminder times, but the alarms themselves lived in
         // WorkManager, which a restore onto a new phone starts without. Rebuild them.
@@ -1294,16 +1312,31 @@ class MindQuestRepository(private val context: Context) {
         val due = note.remindAt
         if (done && repeat != null && due != null) {
             val next = Cadences.nextOccurrence(repeat, due)
-            noteDao.upsert(note.copy(done = false, remindAt = next))
+            noteDao.upsert(note.copy(done = false, remindAt = next, completedAt = note.completedAt ?: System.currentTimeMillis()))
             Reminders.cancel(context, id)
             Reminders.schedule(context, id, note.text, next)
+            // Each round of a repeating item is a real completion, so each one pays.
+            award("task_done", xpFor(note), refId = id)
             TodayWidget.refresh(context)
             return next
         }
-        noteDao.upsert(note.copy(done = done))
+        // XP the first time an item is ticked, never again: ticking and unticking the same
+        // line must not be a way to farm levels.
+        val firstTime = done && note.completedAt == null
+        noteDao.upsert(note.copy(done = done, completedAt = if (firstTime) System.currentTimeMillis() else note.completedAt))
         if (done) Reminders.cancel(context, id) // no point nagging about a finished errand
+        if (firstTime) award("task_done", xpFor(note), refId = id)
         TodayWidget.refresh(context)
         return null
+    }
+
+    /** What ticking an item is worth: a little for any, more for a starred one. */
+    fun xpFor(note: NoteEntity): Int = if (note.starred) STARRED_TASK_XP else TASK_XP
+
+    /** Star an item — a bigger task, worth more when done. Not an edit of its wording. */
+    suspend fun setNoteStarred(id: String, starred: Boolean) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(starred = starred))
     }
 
     /** Make a note's reminder repeat, or stop it repeating. Needs a reminder to repeat. */
@@ -1591,6 +1624,12 @@ class MindQuestRepository(private val context: Context) {
                 val id = createTargetGoal(goal, narrative = spoken)
                 return CaptureResult(id, goal.title, null, "general", null, goal = goal)
             }
+            // "Walk 5000 steps every day at 9pm" is a habit: a streak and a nudge that goes
+            // quiet once it's done, not a reminder that nags regardless.
+            HabitParse.detect(spoken)?.let { h ->
+                val id = createHabitFrom(h)
+                return CaptureResult(id, h.title, null, "general", null, habit = h)
+            }
         }
         val parsed = DateParse.parse(spoken)
         val text = parsed.text.ifBlank { spoken.trim() }
@@ -1732,11 +1771,6 @@ class MindQuestRepository(private val context: Context) {
                 )
             }
 
-            questDao.allQuests()
-                .filter { needle in it.title.lowercase() }
-                .take(perKind)
-                .forEach { hits += GlobalHit(GlobalKind.Quest, it.title, it.status, it.id) }
-
             // A mission matches on what it is for as well as what it's called: searching
             // "80 kg" should find the monthly weigh-in.
             habitDao.allHabits()
@@ -1791,21 +1825,25 @@ class MindQuestRepository(private val context: Context) {
         existing.keys.filter { it !in live }.forEach { noteVectorDao.delete(it) }
     }
 
-    private companion object {
+    companion object {
         /** Chunks re-embedded per database write during a reindex. */
-        const val REINDEX_BATCH = 16
+        private const val REINDEX_BATCH = 16
 
         /**
          * How close in meaning a note must be to turn up without sharing your words. MiniLM
          * puts related short sentences around 0.4–0.7 and unrelated ones under 0.2; 0.35
          * lets "that restaurant in Colaba" find the dhaba without every note matching.
          */
-        const val NOTE_MEANING_FLOOR = 0.35f
+        private const val NOTE_MEANING_FLOOR = 0.35f
 
         /** 09:00 — the check-in lands with the morning, not in the middle of the night. */
-        const val DEFAULT_CHECKIN_MINUTE = 9 * 60
+        private const val DEFAULT_CHECKIN_MINUTE = 9 * 60
 
         /** A small reward for turning up to a check-in, whatever the number says. */
-        const val GOAL_CHECKIN_XP = 10
+        private const val GOAL_CHECKIN_XP = 10
+
+        /** Ticking an Inbox item: a little for any, the old "hard quest" reward for a starred one. */
+        const val TASK_XP = 10
+        const val STARRED_TASK_XP = 50
     }
 }

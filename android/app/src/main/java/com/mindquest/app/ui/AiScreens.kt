@@ -1,6 +1,9 @@
 package com.mindquest.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -159,7 +162,7 @@ private fun ReviewCard(repo: MindQuestRepository, r: WeeklyReviewEntity) {
 // ---------- Settings (Sarvam key) ----------
 
 @Composable
-fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
+fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit, onOpenBackup: () -> Unit = {}) {
     val s = repo.settings
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -168,8 +171,25 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     var configured by remember { mutableStateOf(s.hasSarvamKey()) }
     val usage = remember(configured) { s.usage() }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, color = Parchment)
+        Card(Modifier.fillMaxWidth().clickable { onOpenBackup() }) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("💾", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Backup & restore", fontWeight = FontWeight.Bold, color = Parchment)
+                    Text(
+                        "Export, restore, and the weekly automatic backup.",
+                        style = MaterialTheme.typography.bodySmall, color = Muted,
+                    )
+                }
+                Text("›", style = MaterialTheme.typography.titleLarge, color = Muted)
+            }
+        }
         Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Sarvam AI", fontWeight = FontWeight.Bold, color = Parchment)
             Text(

@@ -31,7 +31,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         GoalProgressEntity::class,
         GoalCheckpointEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -98,6 +98,46 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /**
+         * Quests became Inbox items. Each active quest turns into a note with the same id, its
+         * deadline as the reminder and a star if it was hard or epic; drafts are dropped. Run by
+         * the v13→v14 migration and again after restoring a backup made before it.
+         */
+        fun foldQuestsIntoInbox(db: SupportSQLiteDatabase) {
+            // Notes that were promoted to a hard or epic quest keep that weight as a star.
+            db.execSQL(
+                "UPDATE `notes` SET `starred` = 1 WHERE `questId` IN " +
+                    "(SELECT `id` FROM `quests` WHERE `status` = 'active' AND `difficulty` IN ('hard', 'epic'))",
+            )
+            db.execSQL(
+                "INSERT OR IGNORE INTO `notes` (`id`, `text`, `done`, `remindAt`, `questId`, `docId`, " +
+                    "`createdAt`, `category`, `categoryLocked`, `folderId`, `updatedAt`, `repeat`, " +
+                    "`starred`, `completedAt`) " +
+                    "SELECT `id`, `title`, 0, `dueAt`, `id`, NULL, `createdAt`, `category`, `categoryLocked`, " +
+                    "NULL, NULL, NULL, CASE WHEN `difficulty` IN ('hard', 'epic') THEN 1 ELSE 0 END, NULL " +
+                    "FROM `quests` WHERE `status` = 'active' AND `id` NOT IN " +
+                    "(SELECT `questId` FROM `notes` WHERE `questId` IS NOT NULL)",
+            )
+            db.execSQL("UPDATE `quests` SET `status` = 'migrated' WHERE `status` = 'active'")
+            db.execSQL("UPDATE `quests` SET `status` = 'abandoned' WHERE `status` = 'draft'")
+        }
+
+        /**
+         * v13→v14: the Inbox becomes the one to-do list. Notes gain a star (a bigger task,
+         * more XP) and a first-completed stamp. Every active quest becomes an Inbox item —
+         * same id, title, category and deadline, starred if it was hard or epic — unless it
+         * already has one, because it was promoted from a note in the first place. Drafts the
+         * Questmaster suggested and nobody accepted are set aside. Completed quests stay as
+         * they are: they are the history the XP and achievements were earned from.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `starred` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `completedAt` INTEGER")
+                foldQuestsIntoInbox(db)
             }
         }
 
@@ -231,7 +271,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
             return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
                 // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                 // as a last resort on downgrade, which shouldn't happen in normal use.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
                 .build()

@@ -324,6 +324,13 @@ interface NoteDao {
 
     @Query("SELECT COUNT(*) FROM notes WHERE done = 0")
     suspend fun openCount(): Int
+
+    /** Items ever ticked off — they count towards the achievements quests used to. */
+    @Query("SELECT COUNT(*) FROM notes WHERE completedAt IS NOT NULL")
+    suspend fun completedCount(): Int
+
+    @Query("SELECT COUNT(*) FROM notes WHERE completedAt IS NOT NULL AND starred = 1")
+    suspend fun starredCompletedCount(): Int
 }
 
 @Dao

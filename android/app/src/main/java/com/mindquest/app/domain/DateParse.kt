@@ -19,15 +19,24 @@ import java.time.ZoneId
  */
 object DateParse {
 
-    /** [repeat] is a Cadences id when the sentence said how often — "every month". */
-    data class Parsed(val text: String, val dueAt: Long?, val repeat: String? = null)
+    /**
+     * [repeat] is a Cadences id when the sentence said how often — "every month".
+     * [timeGiven] says a time of day was actually named ("at 9pm", "tonight"), as opposed to
+     * the 09:00 a date gets when none was — a habit should only nudge at a time you chose.
+     */
+    data class Parsed(
+        val text: String,
+        val dueAt: Long?,
+        val repeat: String? = null,
+        val timeGiven: Boolean = false,
+    )
 
     /**
      * Phrases that say how often, most specific first so "every weekday" isn't read as a
      * bare "every week". "Every Sunday" is weekly; the weekday itself is picked up by the
      * weekday rule below, which is what supplies the first date.
      */
-    private val REPEATS = listOf(
+    internal val REPEATS = listOf(
         Regex("""\b(every\s+weekday|on\s+weekdays|weekdays)\b""") to "weekdays",
         Regex("""\b(every\s+(single\s+)?day|everyday|daily)\b""") to "daily",
         Regex("""\bevery\s+(?=(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)""") to "weekly",
@@ -201,6 +210,7 @@ object DateParse {
                         clean(text, cut),
                         moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
                         repeat,
+                        timeGiven = true,
                     )
                 }
         }
@@ -214,7 +224,20 @@ object DateParse {
         }
         val moment = LocalDateTime.of(day, time ?: DEFAULT_TIME)
         text = clean(text, cut)
-        return Parsed(text, moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), repeat)
+        return Parsed(text, moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), repeat, time != null)
+    }
+
+    /**
+     * The sentence without its "how often" and "when" words: "walk 5000 steps every day at
+     * 9pm" → "walk 5000 steps". Works even when there is no date to read, which [parse]
+     * deliberately leaves untouched.
+     */
+    fun stripSchedule(raw: String, now: LocalDateTime = LocalDateTime.now()): String {
+        val parsed = parse(raw, now)
+        if (parsed.dueAt != null) return parsed.text
+        val lower = raw.trim().lowercase()
+        val cut = REPEATS.mapNotNull { (pattern, _) -> pattern.find(lower)?.range }.take(1)
+        return clean(raw.trim(), cut)
     }
 
     /** A date in the past almost always means the same day next year. */
