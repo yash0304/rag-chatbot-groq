@@ -4,6 +4,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.YearMonth
 import java.time.ZoneId
 
 /**
@@ -18,7 +19,24 @@ import java.time.ZoneId
  */
 object DateParse {
 
-    data class Parsed(val text: String, val dueAt: Long?)
+    /** [repeat] is a Cadences id when the sentence said how often — "every month". */
+    data class Parsed(val text: String, val dueAt: Long?, val repeat: String? = null)
+
+    /**
+     * Phrases that say how often, most specific first so "every weekday" isn't read as a
+     * bare "every week". "Every Sunday" is weekly; the weekday itself is picked up by the
+     * weekday rule below, which is what supplies the first date.
+     */
+    private val REPEATS = listOf(
+        Regex("""\b(every\s+weekday|on\s+weekdays|weekdays)\b""") to "weekdays",
+        Regex("""\b(every\s+(single\s+)?day|everyday|daily)\b""") to "daily",
+        Regex("""\bevery\s+(?=(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)""") to "weekly",
+        Regex("""\b(every\s+week|weekly)\b""") to "weekly",
+        Regex("""\b(every\s+(6|six)\s+months|half[\s-]?yearly|twice\s+a\s+year)\b""") to "halfyearly",
+        Regex("""\b(every\s+(3|three)\s+months|every\s+quarter|quarterly)\b""") to "quarterly",
+        Regex("""\b(every\s+month|monthly)\b""") to "monthly",
+        Regex("""\b(every\s+year|yearly|annually)\b""") to "yearly",
+    )
 
     private val MONTHS = mapOf(
         "january" to 1, "jan" to 1, "february" to 2, "feb" to 2, "march" to 3, "mar" to 3,
@@ -48,6 +66,17 @@ object DateParse {
         var date: LocalDate? = null
         var time: LocalTime? = null
         val cut = mutableListOf<IntRange>()
+
+        // --- how often: "every month", "every Sunday", "daily" ---
+        // Only kept if a date turns up as well — see the early return below, which hands
+        // the sentence back untouched, so "daily standup notes" stays exactly as written.
+        var repeat: String? = null
+        for ((pattern, cadence) in REPEATS) {
+            val m = pattern.find(lower) ?: continue
+            repeat = cadence
+            cut += m.range
+            break
+        }
 
         // --- explicit clock time: "at 5pm", "at 17:30", "by 9 pm" ---
         Regex("""\b(?:at|by|around)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b""")
@@ -91,6 +120,33 @@ object DateParse {
                 }
         }
 
+        // --- a bare day of the month: "on the 5th", "5th of every month" ---
+        // The ordinal suffix is required, so "buy 2 kg" is never read as the 2nd. Lands on
+        // the next 5th still ahead — this month's if there's time left in it, else next.
+        if (date == null) {
+            Regex("""\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b""").find(lower)?.let { m ->
+                val day = m.groupValues[1].toInt()
+                if (day in 1..31) {
+                    val today = now.toLocalDate()
+                    val at = time ?: DEFAULT_TIME
+                    var month = YearMonth.from(today)
+                    for (k in 0..12) {
+                        if (day <= month.lengthOfMonth()) {
+                            val candidate = month.atDay(day)
+                            val ahead = candidate.isAfter(today) ||
+                                (candidate == today && at.isAfter(now.toLocalTime()))
+                            if (ahead) {
+                                date = candidate
+                                break
+                            }
+                        }
+                        month = month.plusMonths(1)
+                    }
+                    if (date != null) cut += m.range
+                }
+            }
+        }
+
         // --- relative days ---
         if (date == null) {
             val today = now.toLocalDate()
@@ -132,7 +188,11 @@ object DateParse {
                         else -> now.plusDays(n)
                     }
                     cut += m.range
-                    return Parsed(clean(text, cut), moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+                    return Parsed(
+                        clean(text, cut),
+                        moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                        repeat,
+                    )
                 }
         }
 
@@ -145,7 +205,7 @@ object DateParse {
         }
         val moment = LocalDateTime.of(day, time ?: DEFAULT_TIME)
         text = clean(text, cut)
-        return Parsed(text, moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+        return Parsed(text, moment.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), repeat)
     }
 
     /** A date in the past almost always means the same day next year. */
@@ -168,7 +228,9 @@ object DateParse {
         val keep = StringBuilder()
         text.forEachIndexed { i, ch -> if (ranges.none { i in it }) keep.append(ch) }
         return keep.toString()
-            .replace(Regex("""\s+(by|on|at|before|around)\s*$""", RegexOption.IGNORE_CASE), "")
+            // One or more, because removing "every month" from "on the 5th of every month"
+            // can leave connecting words stacked at the end ("… of the").
+            .replace(Regex("""(\s+(by|on|at|before|around|of|the))+\s*$""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\s{2,}"""), " ")
             .trim()
             .trim(',', '-', '.', ';')

@@ -233,6 +233,24 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .apply { pending?.let { setContentIntent(it) } }
+            .apply {
+                // A reminder with no id is a legacy one-off with no note behind it; there is
+                // nothing for the buttons to act on, so it gets none.
+                if (noteId.isNotEmpty()) {
+                    addAction(
+                        0, "✓ Done",
+                        ReminderActionReceiver.pendingIntent(
+                            applicationContext, ReminderActionReceiver.ACTION_NOTE_DONE, noteId,
+                        ),
+                    )
+                    addAction(
+                        0, "⏰ Snooze 1h",
+                        ReminderActionReceiver.pendingIntent(
+                            applicationContext, ReminderActionReceiver.ACTION_NOTE_SNOOZE, noteId,
+                        ),
+                    )
+                }
+            }
             .build()
 
         try {
@@ -306,6 +324,14 @@ class HabitReminderWorker(appContext: Context, params: WorkerParameters) :
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                // Checking in from here pays the same XP and keeps the same streak as the
+                // button in the app — it is the same call.
+                .addAction(
+                    0, "✓ Mark done",
+                    ReminderActionReceiver.pendingIntent(
+                        applicationContext, ReminderActionReceiver.ACTION_HABIT_DONE, habitId,
+                    ),
+                )
                 .build()
             try {
                 NotificationManagerCompat.from(applicationContext)

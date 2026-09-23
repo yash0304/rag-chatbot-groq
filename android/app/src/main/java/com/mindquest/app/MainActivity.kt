@@ -68,11 +68,15 @@ fun MindQuestApp() {
         // WorkManager keeps periodic work across reboots itself; this repairs the case where
         // its records were cleared, and is a no-op when everything is already scheduled.
         repo.rearmHabitReminders()
+        repo.rearmNoteReminders()
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked
             else -> AppState.Ready
         }
+        // After the app is on screen, not before: embedding every note the first time after
+        // an update can take a few seconds, and nobody should wait for it to open the app.
+        launch { runCatching { repo.indexNotes() } }
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -141,6 +145,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                         GlobalKind.Quest -> Dest.Quests
                         GlobalKind.Habit -> Dest.Habits
                         GlobalKind.Goal -> Dest.Goals
+                        GlobalKind.Folder -> Dest.Inbox
                     },
                 )
             },

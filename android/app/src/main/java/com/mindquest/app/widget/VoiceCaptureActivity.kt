@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.widget.Toast
 import com.mindquest.app.data.MindQuestRepository
+import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Categories
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +61,8 @@ class VoiceCaptureActivity : Activity() {
                     // a wrongly-read date is caught now rather than discovered next week.
                     val where = Categories.of(result.category).label
                     val due = result.dueAt?.let { " · ${dueFmt.format(Date(it))}" } ?: ""
-                    toast("${result.text} → $where$due")
+                    val repeat = result.repeat?.let { " · 🔁 ${Cadences.of(it).label}" } ?: ""
+                    toast("${result.text} → $where$due$repeat")
                 }
                 TodayWidget.refresh(applicationContext)
                 finish()

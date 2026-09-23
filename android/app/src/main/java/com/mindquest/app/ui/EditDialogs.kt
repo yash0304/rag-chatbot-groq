@@ -46,12 +46,14 @@ fun EditedStamp(updatedAt: Long?) {
 fun EditNoteDialog(
     initialText: String,
     initialRemindAt: Long?,
+    initialRepeat: String?,
     onDismiss: () -> Unit,
-    onSave: (text: String, remindAt: Long?) -> Unit,
+    onSave: (text: String, remindAt: Long?, repeat: String?) -> Unit,
 ) {
     val context = LocalContext.current
     var text by remember { mutableStateOf(initialText) }
     var remindAt by remember { mutableStateOf(initialRemindAt) }
+    var repeat by remember { mutableStateOf(initialRepeat) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -78,17 +80,21 @@ fun EditNoteDialog(
                         )
                     }
                     if (remindAt != null) {
-                        TextButton(onClick = { remindAt = null }) {
+                        TextButton(onClick = { remindAt = null; repeat = null }) {
                             Text("clear", style = MaterialTheme.typography.labelSmall, color = Muted)
                         }
                     }
+                }
+                // Only offered once there is a time: a repeat has to repeat from somewhere.
+                if (remindAt != null) {
+                    RepeatRow(selected = repeat, onSelect = { repeat = it })
                 }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = text.isNotBlank(),
-                onClick = { onSave(text.trim(), remindAt) },
+                onClick = { onSave(text.trim(), remindAt, if (remindAt == null) null else repeat) },
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -245,6 +251,28 @@ fun EditMissionDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** "Once" plus daily through yearly, for a note's reminder. Null means once. */
+@Composable
+fun RepeatRow(selected: String?, onSelect: (String?) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        FilterChip(
+            selected = selected == null,
+            onClick = { onSelect(null) },
+            label = { Text("once", style = MaterialTheme.typography.labelSmall) },
+        )
+        Cadences.all.forEach { c ->
+            FilterChip(
+                selected = selected == c.id,
+                onClick = { onSelect(c.id) },
+                label = { Text("🔁 ${c.label}", style = MaterialTheme.typography.labelSmall) },
+            )
+        }
+    }
 }
 
 /** Daily through yearly, in one scrollable row so the long list doesn't squash the labels. */

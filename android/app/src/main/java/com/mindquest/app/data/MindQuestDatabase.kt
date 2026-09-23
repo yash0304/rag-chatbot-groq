@@ -26,8 +26,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         NoteEntity::class,
         FolderEntity::class,
         AttachmentEntity::class,
+        NoteVectorEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -43,6 +44,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun folderDao(): FolderDao
     abstract fun attachmentDao(): AttachmentDao
+    abstract fun noteVectorDao(): NoteVectorDao
 
     companion object {
         @Volatile
@@ -93,6 +95,21 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /**
+         * v10→v11: repeating reminders on notes, and the vectors that let search find a
+         * note by what it means. Additive; the vectors fill in on their own afterwards.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `repeat` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `note_vectors` (`noteId` TEXT NOT NULL, " +
+                        "`vectorCsv` TEXT NOT NULL, `textHash` INTEGER NOT NULL, " +
+                        "`embedder` TEXT NOT NULL, PRIMARY KEY(`noteId`))",
+                )
             }
         }
 
@@ -173,7 +190,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
                 )
                     // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                     // as a last resort on downgrade, which shouldn't happen in normal use.
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                     .also { instance = it }

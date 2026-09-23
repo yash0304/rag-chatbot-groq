@@ -121,6 +121,52 @@ object Cadences {
         now: LocalDateTime = LocalDateTime.now(),
     ): Long = (nextFireAt(cadence, minuteOfDay, now) - System.currentTimeMillis()).coerceAtLeast(1_000L)
 
+    /**
+     * The same slot one interval later — the 5th of next month, next Tuesday at 9. Unlike
+     * [nextPeriodStart] this keeps the day you chose rather than snapping to the start of a
+     * period: rent due on the 5th is due on the 5th, not the 1st.
+     *
+     * Month arithmetic clamps, so a reminder on the 31st lands on the 30th in a 30-day month
+     * and stays there. That is java.time's rule, and it is the lesser evil next to a reminder
+     * that skips February altogether.
+     */
+    fun advance(cadence: String, from: LocalDateTime): LocalDateTime = when (cadence) {
+        "weekly" -> from.plusWeeks(1)
+        "monthly" -> from.plusMonths(1)
+        "quarterly" -> from.plusMonths(3)
+        "halfyearly" -> from.plusMonths(6)
+        "yearly" -> from.plusYears(1)
+        "weekdays" -> {
+            var d = from.plusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY) {
+                d = d.plusDays(1)
+            }
+            d
+        }
+        else -> from.plusDays(1)
+    }
+
+    /**
+     * When a repeating reminder should next go off, counted from when it was due — not from
+     * when it was ticked. Paying the 5th-of-the-month rent on the 7th must not move next
+     * month's reminder to the 7th. Steps forward as many intervals as needed to land in the
+     * future, so a reminder ticked weeks late doesn't come back already overdue.
+     */
+    fun nextOccurrence(
+        cadence: String,
+        scheduledAt: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Long {
+        val zone = ZoneId.systemDefault()
+        var next = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(scheduledAt), zone)
+        var guard = 0
+        do {
+            next = advance(cadence, next)
+            guard++
+        } while (next.atZone(zone).toInstant().toEpochMilli() <= now && guard < 10_000)
+        return next.atZone(zone).toInstant().toEpochMilli()
+    }
+
     /** "Mar 2027" — a target date is a month, not an appointment, so it reads as one. */
     fun formatTarget(isoDate: String): String = runCatching {
         LocalDate.parse(isoDate).format(DateTimeFormatter.ofPattern("MMM yyyy"))

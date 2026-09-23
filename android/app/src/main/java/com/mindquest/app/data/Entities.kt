@@ -241,7 +241,31 @@ data class NoteEntity(
     val folderId: String? = null,
     /** When the user last changed the wording or the reminder. Null = never edited. */
     val updatedAt: Long? = null,
+    /**
+     * How often the reminder comes back, as a Cadences id ("monthly"), or null for once.
+     * A repeating note is never left ticked: marking it done rolls the reminder forward to
+     * the next date, so "rent on the 5th" is one note for as long as you pay rent.
+     */
+    val repeat: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * A note's meaning, as a vector, so search can find "that restaurant in Colaba" from a note
+ * that only says "Gokul Dhaba — must visit".
+ *
+ * Its own table rather than a column on the note: every change to any note re-emits the
+ * whole Inbox list, and carrying a few kilobytes of numbers per note through every one of
+ * those would be paid for on each keystroke. [textHash] and [embedder] say what the vector
+ * was computed from, so an edited note or a switched-in embedder is noticed and redone.
+ * Not exported — it is derived data and rebuilds itself after a restore.
+ */
+@Entity(tableName = "note_vectors")
+data class NoteVectorEntity(
+    @PrimaryKey val noteId: String,
+    val vectorCsv: String,
+    val textHash: Int,
+    val embedder: String,
 )
 
 @Entity(tableName = "weekly_reviews")

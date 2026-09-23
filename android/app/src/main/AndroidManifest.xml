@@ -38,6 +38,44 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!--
+          "Share → MindQuest" from any app. Exported because the share sheet is how other
+          apps reach it; it only ever adds to the app, and it reads nothing but content://
+          URIs another app chose to share. No permission is needed for any of this.
+        -->
+        <activity
+            android:name=".share.ShareReceiverActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:label="MindQuest"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+            </intent-filter>
+        </activity>
+
+        <!-- Done / Snooze buttons on reminders. Not exported: only our own notifications reach it. -->
+        <receiver
+            android:name=".domain.ReminderActionReceiver"
+            android:exported="false" />
+
         <!-- Transparent: the speech recogniser's own dialog is the entire interface. -->
         <activity
             android:name=".widget.VoiceCaptureActivity"

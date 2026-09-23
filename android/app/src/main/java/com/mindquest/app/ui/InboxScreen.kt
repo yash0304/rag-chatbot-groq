@@ -16,9 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.mindquest.app.data.AttachmentEntity
 import com.mindquest.app.data.FolderEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
+import com.mindquest.app.domain.Cadences
 import com.mindquest.app.domain.Categories
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
@@ -37,6 +39,8 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allNotes by repo.observeNotes().collectAsState(emptyList())
+    val notePhotos by repo.observeAttachments("note").collectAsState(emptyList())
+    val photosByNote = notePhotos.groupBy { it.ownerId }
     val categoryCounts by repo.observeNoteFolders().collectAsState(emptyMap())
     val customFolders by repo.observeFolders().collectAsState(emptyList())
     val customCounts by repo.observeFolderCounts().collectAsState(emptyMap())
@@ -91,6 +95,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 buildString {
                     append(r.text)
                     r.dueAt?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
+                    r.repeat?.let { append(" · 🔁 ${Cadences.of(it).label}") }
                     if (r.folderId == null) append(" · ${Categories.of(r.category).label}")
                 },
             )
@@ -115,15 +120,19 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         EditNoteDialog(
             initialText = note.text,
             initialRemindAt = note.remindAt,
+            initialRepeat = note.repeat,
             onDismiss = { editing = null },
-            onSave = { text, remindAt ->
+            onSave = { text, remindAt, repeat ->
                 editing = null
                 ensureNotifPermission()
                 scope.launch {
-                    repo.editNote(note.id, text, remindAt)
+                    repo.editNote(note.id, text, remindAt, repeat)
                     notify(
-                        if (remindAt == null) "Saved."
-                        else "Saved · ⏰ ${timeFmt.format(Date(remindAt))}",
+                        buildString {
+                            append("Saved")
+                            remindAt?.let { append(" · ⏰ ${timeFmt.format(Date(it))}") }
+                            repeat?.let { append(" · 🔁 ${Cadences.of(it).label}") }
+                        },
                     )
                 }
             },
@@ -205,7 +214,17 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             items(notes) { note ->
                 NoteCard(
                     note = note,
-                    onToggleDone = { scope.launch { repo.setNoteDone(note.id, !note.done) } },
+                    photos = photosByNote[note.id].orEmpty(),
+                    onAddPhoto = { path -> scope.launch { repo.addAttachment("note", note.id, path) } },
+                    onRemovePhoto = { scope.launch { repo.deleteAttachment(it.id) } },
+                    onToggleDone = {
+                        scope.launch {
+                            // A repeating note rolls forward instead of ticking; say where to.
+                            repo.setNoteDone(note.id, !note.done)?.let { next ->
+                                notify("Done — next one ${timeFmt.format(Date(next))}.")
+                            }
+                        }
+                    },
                     onEdit = { editing = note },
                     onRemind = {
                         ensureNotifPermission()
@@ -295,6 +314,9 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
 @Composable
 private fun NoteCard(
     note: NoteEntity,
+    photos: List<AttachmentEntity>,
+    onAddPhoto: (String) -> Unit,
+    onRemovePhoto: (AttachmentEntity) -> Unit,
     onToggleDone: () -> Unit,
     onEdit: () -> Unit,
     onRemind: () -> Unit,
@@ -332,6 +354,7 @@ private fun NoteCard(
                     buildString {
                         append(timeFmt.format(Date(note.createdAt)))
                         note.remindAt?.let { append("  ·  ⏰ ${timeFmt.format(Date(it))}") }
+                        note.repeat?.let { append(" 🔁 ${Cadences.of(it).label}") }
                         if (note.questId != null) append("  ·  ⚔️")
                         if (note.docId != null) append("  ·  📜")
                     },
@@ -340,6 +363,11 @@ private fun NoteCard(
                 EditedStamp(note.updatedAt)
             }
             CategoryChip(note.category, onCategory)
+            // Only notes that have photos show the strip — most notes are a line of text,
+            // and a camera button on every one of them would turn the Inbox into clutter.
+            if (photos.isNotEmpty()) {
+                PhotoStrip(photos = photos, onAdd = onAddPhoto, onRemove = onRemovePhoto)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = if (note.remindAt == null) onRemind else onClearRemind) {
                     Text(if (note.remindAt == null) "Remind" else "Unremind", style = MaterialTheme.typography.labelSmall)

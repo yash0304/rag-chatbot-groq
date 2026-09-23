@@ -220,6 +220,18 @@ interface FolderDao {
 }
 
 @Dao
+interface NoteVectorDao {
+    @Upsert
+    suspend fun upsert(vector: NoteVectorEntity)
+
+    @Query("SELECT * FROM note_vectors")
+    suspend fun all(): List<NoteVectorEntity>
+
+    @Query("DELETE FROM note_vectors WHERE noteId = :noteId")
+    suspend fun delete(noteId: String)
+}
+
+@Dao
 interface AttachmentDao {
     @Upsert
     suspend fun upsert(attachment: AttachmentEntity)

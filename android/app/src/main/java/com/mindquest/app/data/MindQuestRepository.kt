@@ -81,6 +81,7 @@ data class CaptureResult(
     val dueAt: Long?,
     val category: String,
     val folderId: String?,
+    val repeat: String? = null,
 )
 
 /** One line on the home-screen widget. Carries its id so the row can be ticked off there. */
@@ -100,6 +101,7 @@ enum class GlobalKind(val label: String, val icon: String) {
     Quest("Quests", "⚔️"),
     Habit("Missions", "🔥"),
     Goal("Story Arcs", "📖"),
+    Folder("Inbox folder", "🗂"),
 }
 
 data class GlobalHit(
@@ -173,6 +175,7 @@ class MindQuestRepository(private val context: Context) {
     private val noteDao = db.noteDao()
     private val folderDao = db.folderDao()
     private val attachmentDao = db.attachmentDao()
+    private val noteVectorDao = db.noteVectorDao()
     private val json = Json { ignoreUnknownKeys = true }
 
     // Resolved on first use: the MiniLM model if its assets shipped, else hashing vectors.
@@ -396,6 +399,21 @@ class MindQuestRepository(private val context: Context) {
      * the case where the chain was broken (app data wiped, a restore from backup, a firing
      * that never happened) and costs nothing when everything is already scheduled.
      */
+    /**
+     * Re-arm every note reminder that is still ahead of us. Only future ones are touched:
+     * a reminder already past its time may be partway through its repeat-until-done chain,
+     * and cancelling that to reschedule would silence a nag that is currently working.
+     */
+    suspend fun rearmNoteReminders() = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        noteDao.allNotes()
+            .filter { !it.done && (it.remindAt ?: 0L) > now }
+            .forEach { note ->
+                Reminders.cancel(context, note.id)
+                Reminders.schedule(context, note.id, note.text, note.remindAt!!)
+            }
+    }
+
     suspend fun rearmHabitReminders() = withContext(Dispatchers.IO) {
         habitDao.allHabits().forEach { habit ->
             habit.remindMinuteOfDay?.let {
@@ -574,6 +592,9 @@ class MindQuestRepository(private val context: Context) {
 
     fun observeDocuments(): Flow<List<DocumentEntity>> = documentDao.observeDocuments()
 
+    /** The display name of a content URI, e.g. "ticket.pdf". Public for the share handler. */
+    fun displayName(uri: Uri): String = resolveName(uri)
+
     private fun resolveName(uri: Uri): String {
         var name = "document"
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
@@ -585,11 +606,15 @@ class MindQuestRepository(private val context: Context) {
         return name
     }
 
-    /** Import + process a picked file fully offline; returns the document id. */
-    suspend fun importDocument(uri: Uri): String {
+    /**
+     * Import + process a picked file fully offline; returns the document id. [nameOverride]
+     * and [mimeOverride] are for a file shared in from another app and copied locally first,
+     * where the copy no longer knows what it was called or what it is.
+     */
+    suspend fun importDocument(uri: Uri, nameOverride: String? = null, mimeOverride: String? = null): String {
         val id = UUID.randomUUID().toString()
-        val name = resolveName(uri)
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val name = nameOverride ?: resolveName(uri)
+        val mime = mimeOverride ?: context.contentResolver.getType(uri) ?: "application/octet-stream"
         documentDao.upsertDocument(DocumentEntity(id = id, title = name, filename = name, mimeType = mime, status = "processing"))
         award("document_uploaded", Catalogs.Xp.DOCUMENT_UPLOADED, refId = id)
         try {
@@ -956,7 +981,16 @@ class MindQuestRepository(private val context: Context) {
         bundle.chat.forEach { chatDao.insert(it) }
         bundle.reviews.forEach { reviewDao.upsert(it) }
         bundle.notes.forEach { noteDao.upsert(it) }
+        // Every table cleared above has to be refilled here. Folders and photo records were
+        // once added to the export without being added to this list, which meant restoring
+        // your own backup quietly deleted every folder you had made.
+        bundle.folders.forEach { folderDao.upsert(it) }
+        bundle.attachments.forEach { attachmentDao.upsert(it) }
         seedIfEmpty() // restore catalog rows if the bundle predates them
+        // Restored rows carry their reminder times, but the alarms themselves lived in
+        // WorkManager, which a restore onto a new phone starts without. Rebuild them.
+        rearmNoteReminders()
+        rearmHabitReminders()
         return bundle.xpEvents.size + bundle.quests.size + bundle.habits.size +
             bundle.goals.size + bundle.documents.size
     }
@@ -989,10 +1023,47 @@ class MindQuestRepository(private val context: Context) {
         return id
     }
 
-    suspend fun setNoteDone(id: String, done: Boolean) {
-        val note = noteDao.get(id) ?: return
+    /**
+     * Tick a note off, or untick it. A repeating note is never left ticked: it rolls its
+     * reminder forward to the next date and stays open, so the Inbox, the widget and the
+     * notification's Done button — which all come through here — treat "rent on the 5th"
+     * the same way. Returns the next reminder time when it rolled, so callers can say so.
+     */
+    suspend fun setNoteDone(id: String, done: Boolean): Long? {
+        val note = noteDao.get(id) ?: return null
+        val repeat = note.repeat
+        val due = note.remindAt
+        if (done && repeat != null && due != null) {
+            val next = Cadences.nextOccurrence(repeat, due)
+            noteDao.upsert(note.copy(done = false, remindAt = next))
+            Reminders.cancel(context, id)
+            Reminders.schedule(context, id, note.text, next)
+            TodayWidget.refresh(context)
+            return next
+        }
         noteDao.upsert(note.copy(done = done))
         if (done) Reminders.cancel(context, id) // no point nagging about a finished errand
+        TodayWidget.refresh(context)
+        return null
+    }
+
+    /** Make a note's reminder repeat, or stop it repeating. Needs a reminder to repeat. */
+    suspend fun setNoteRepeat(id: String, repeat: String?) {
+        val note = noteDao.get(id) ?: return
+        noteDao.upsert(note.copy(repeat = repeat, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * Push a reminder back from the notification itself. The new time is written onto the
+     * note, so the Inbox and the widget show when it will come back rather than the time
+     * it was originally due. Not stamped as an edit — the note says the same thing.
+     */
+    suspend fun snoozeNote(id: String, minutes: Long) {
+        val note = noteDao.get(id) ?: return
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        noteDao.upsert(note.copy(remindAt = at))
+        Reminders.cancel(context, id)
+        Reminders.schedule(context, id, note.text, at)
         TodayWidget.refresh(context)
     }
 
@@ -1012,10 +1083,18 @@ class MindQuestRepository(private val context: Context) {
      * hasn't changed: the pending work carries the old wording as a fallback, so editing the
      * words without re-scheduling would leave a reminder that fires saying the wrong thing.
      */
-    suspend fun editNote(id: String, text: String, remindAt: Long?) {
+    suspend fun editNote(id: String, text: String, remindAt: Long?, repeat: String?) {
         val note = noteDao.get(id) ?: return
         val body = text.trim().ifBlank { note.text }
-        noteDao.upsert(note.copy(text = body, remindAt = remindAt, updatedAt = System.currentTimeMillis()))
+        noteDao.upsert(
+            note.copy(
+                text = body,
+                remindAt = remindAt,
+                // Nothing to repeat without a time to repeat from.
+                repeat = if (remindAt == null) null else repeat,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
         Reminders.cancel(context, id)
         if (remindAt != null) Reminders.schedule(context, id, body, remindAt)
         TodayWidget.refresh(context)
@@ -1023,6 +1102,7 @@ class MindQuestRepository(private val context: Context) {
 
     suspend fun deleteNote(id: String) {
         Reminders.cancel(context, id)
+        noteVectorDao.delete(id)
         attachmentDao.of("note", id).forEach { PhotoStore.delete(it.path) }
         attachmentDao.deleteAllOf("note", id)
         noteDao.delete(id)
@@ -1237,7 +1317,10 @@ class MindQuestRepository(private val context: Context) {
             categoryChosen = category != null || folderId != null,
         )
         if (folderId != null) setNoteFolder(id, folderId)
-        return CaptureResult(id, text, parsed.dueAt, chosen, folderId)
+        // "Pay rent on the 5th every month" — the repeat only means something with a date.
+        val repeat = parsed.repeat?.takeIf { parsed.dueAt != null }
+        if (repeat != null) noteDao.get(id)?.let { noteDao.upsert(it.copy(repeat = repeat)) }
+        return CaptureResult(id, text, parsed.dueAt, chosen, folderId, repeat)
     }
 
     /** Open note counts per category, for the Inbox folders. */
@@ -1291,7 +1374,8 @@ class MindQuestRepository(private val context: Context) {
      * Search everything at once — notes, archives, quests, missions and arcs — so a half
      * remembered thing can be found without first knowing which screen it lives on.
      *
-     * Archives go through the full semantic pipeline. The rest are short titles where a
+     * Archives and notes are matched on meaning as well as words — notes are where the
+     * half-remembered things live. Quests, missions and arcs are short titles where a
      * substring match is both sufficient and predictable; running a transformer over a
      * dozen quest titles would cost more than it could possibly add.
      */
@@ -1302,18 +1386,47 @@ class MindQuestRepository(private val context: Context) {
             val needle = q.lowercase()
             val hits = mutableListOf<GlobalHit>()
 
-            noteDao.allNotes()
-                .filter { needle in it.text.lowercase() }
-                .sortedByDescending { it.createdAt }
+            // Notes: every word you typed, or close enough in meaning. The words are matched
+            // separately rather than as one phrase, so "dhaba colaba" finds "Gokul Dhaba,
+            // Colaba" even though the comma breaks the phrase.
+            val notes = noteDao.allNotes()
+            indexNotes(notes)
+            val semantic = embedder !== HashingEmbedder
+            val queryVector = if (semantic) embedder.embed(q) else null
+            val vectors = if (semantic) noteVectorDao.all().associateBy { it.noteId } else emptyMap()
+            val words = needle.split(Regex("""\s+""")).filter { it.length >= 2 }
+            val folderNames = folderDao.all().associate { it.id to it.name }
+
+            notes
+                .mapNotNull { note ->
+                    val text = note.text.lowercase()
+                    val allWords = words.isNotEmpty() && words.all { it in text }
+                    val cosine = queryVector?.let { qv ->
+                        vectors[note.id]?.let { Embeddings.cosine(qv, Embeddings.fromCsv(it.vectorCsv)) }
+                    } ?: 0f
+                    if (!allWords && cosine < NOTE_MEANING_FLOOR) return@mapNotNull null
+                    // An exact hit outranks a merely similar one, but a strong match in meaning
+                    // still beats a weak keyword hit buried in a long note.
+                    val score = (if (allWords) 0.4f else 0f) + 0.6f * cosine
+                    note to score
+                }
+                .sortedByDescending { it.second }
                 .take(perKind)
-                .forEach {
+                .forEach { (note, score) ->
+                    val where = note.folderId?.let { folderNames[it] }?.let { "🗂 $it" }
+                        ?: Categories.of(note.category).let { c -> "${c.icon} ${c.label}" }
                     hits += GlobalHit(
-                        kind = GlobalKind.Note, title = it.text.take(120),
-                        subtitle = Categories.of(it.category).let { c -> "${c.icon} ${c.label}" } +
-                            if (it.done) " · done" else "",
-                        refId = it.id,
+                        kind = GlobalKind.Note, title = note.text.take(120),
+                        subtitle = where + if (note.done) " · done" else "",
+                        refId = note.id, score = score,
                     )
                 }
+
+            // A folder is found by its name — "vegetable" should turn up the Tuesday market.
+            folderDao.all()
+                .filter { f -> words.isNotEmpty() && words.all { it in f.name.lowercase() } }
+                .take(perKind)
+                .forEach { hits += GlobalHit(GlobalKind.Folder, "${it.icon} ${it.name}", "folder", it.id) }
 
             search(q, perKind).forEach {
                 hits += GlobalHit(
@@ -1327,10 +1440,15 @@ class MindQuestRepository(private val context: Context) {
                 .take(perKind)
                 .forEach { hits += GlobalHit(GlobalKind.Quest, it.title, it.status, it.id) }
 
+            // A mission matches on what it is for as well as what it's called: searching
+            // "80 kg" should find the monthly weigh-in.
             habitDao.allHabits()
-                .filter { needle in it.title.lowercase() }
+                .filter { needle in it.title.lowercase() || needle in it.targetNote.orEmpty().lowercase() }
                 .take(perKind)
-                .forEach { hits += GlobalHit(GlobalKind.Habit, it.title, "🔥 ${it.streak}", it.id) }
+                .forEach { h ->
+                    val subtitle = h.targetNote?.let { "🎯 $it" } ?: "🔥 ${h.streak}"
+                    hits += GlobalHit(GlobalKind.Habit, h.title, subtitle, h.id)
+                }
 
             goalDao.allGoals()
                 .filter { needle in it.title.lowercase() }
@@ -1340,8 +1458,46 @@ class MindQuestRepository(private val context: Context) {
             hits
         }
 
+    /**
+     * Make sure every note has a vector for its current wording from the current embedder.
+     * Cheap when nothing changed — a hash comparison per note — and it only embeds the ones
+     * that are new, edited, or were computed by a different embedder, so it can run before
+     * every search and at start-up without anyone noticing. Vectors for deleted notes go.
+     */
+    suspend fun indexNotes(notes: List<NoteEntity>? = null) = withContext(Dispatchers.IO) {
+        if (embedder === HashingEmbedder) return@withContext // nothing meaningful to store
+        val all = notes ?: noteDao.allNotes()
+        val existing = noteVectorDao.all().associateBy { it.noteId }
+        val label = embedder.label
+        all.forEach { note ->
+            val hash = note.text.hashCode()
+            val current = existing[note.id]
+            if (current == null || current.textHash != hash || current.embedder != label) {
+                runCatching {
+                    noteVectorDao.upsert(
+                        NoteVectorEntity(
+                            noteId = note.id,
+                            vectorCsv = Embeddings.toCsv(embedder.embed(note.text)),
+                            textHash = hash,
+                            embedder = label,
+                        ),
+                    )
+                }
+            }
+        }
+        val live = all.map { it.id }.toSet()
+        existing.keys.filter { it !in live }.forEach { noteVectorDao.delete(it) }
+    }
+
     private companion object {
         /** Chunks re-embedded per database write during a reindex. */
         const val REINDEX_BATCH = 16
+
+        /**
+         * How close in meaning a note must be to turn up without sharing your words. MiniLM
+         * puts related short sentences around 0.4–0.7 and unrelated ones under 0.2; 0.35
+         * lets "that restaurant in Colaba" find the dhaba without every note matching.
+         */
+        const val NOTE_MEANING_FLOOR = 0.35f
     }
 }
