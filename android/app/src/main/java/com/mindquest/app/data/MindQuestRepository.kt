@@ -963,8 +963,13 @@ class MindQuestRepository(private val context: Context) {
     }
 
     /** Replace all on-device data with an imported bundle. Returns items restored. */
-    suspend fun importJson(jsonStr: String): Int {
-        val bundle = json.decodeFromString<ExportBundle>(jsonStr)
+    suspend fun importJson(jsonStr: String): Int = importBundle(decodeBundle(jsonStr))
+
+    fun decodeBundle(jsonStr: String): ExportBundle = json.decodeFromString<ExportBundle>(jsonStr)
+
+    fun encodeBundle(bundle: ExportBundle): String = json.encodeToString(bundle)
+
+    suspend fun importBundle(bundle: ExportBundle): Int {
         withContext(Dispatchers.IO) { db.clearAllTables() }
         bundle.profile?.let { profileDao.upsert(it) }
         bundle.xpEvents.forEach { xpDao.insert(it) }

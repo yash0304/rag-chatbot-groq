@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import com.mindquest.app.data.Backup
 import com.mindquest.app.data.GlobalKind
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.ui.*
@@ -69,6 +70,7 @@ fun MindQuestApp() {
         // its records were cleared, and is a no-op when everything is already scheduled.
         repo.rearmHabitReminders()
         repo.rearmNoteReminders()
+        Backup.ensureScheduled(context.applicationContext)
         state = when {
             !repo.hasProfile() -> AppState.Onboarding
             repo.settings.hasPin() -> AppState.Locked

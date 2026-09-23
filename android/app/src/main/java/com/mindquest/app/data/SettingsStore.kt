@@ -80,6 +80,24 @@ class SettingsStore(context: Context) {
     fun lastBackup(): Long = prefs.getLong(KEY_LAST_BACKUP, 0)
     fun recordBackup() { prefs.edit().putLong(KEY_LAST_BACKUP, System.currentTimeMillis()).apply() }
 
+    // ---- automatic weekly backup ----
+    /** The folder (a SAF tree URI) weekly backups go into, or null when switched off. */
+    fun backupFolder(): String? = prefs.getString(KEY_BACKUP_FOLDER, null)
+    fun saveBackupFolder(uri: String) { prefs.edit().putString(KEY_BACKUP_FOLDER, uri).apply() }
+    fun clearBackupFolder() { prefs.edit().remove(KEY_BACKUP_FOLDER).apply() }
+
+    /** Outcome of the last automatic run: the file it wrote, or why it couldn't. */
+    fun recordAutoBackup(fileName: String?, error: String?) {
+        prefs.edit()
+            .putLong(KEY_AUTO_AT, System.currentTimeMillis())
+            .putString(KEY_AUTO_FILE, fileName)
+            .putString(KEY_AUTO_ERROR, error)
+            .apply()
+    }
+    fun lastAutoBackupAt(): Long = prefs.getLong(KEY_AUTO_AT, 0)
+    fun lastAutoBackupFile(): String? = prefs.getString(KEY_AUTO_FILE, null)
+    fun lastAutoBackupError(): String? = prefs.getString(KEY_AUTO_ERROR, null)
+
     private fun sha256(s: String): String =
         MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
@@ -95,6 +113,10 @@ class SettingsStore(context: Context) {
         const val KEY_PHONE = "reminder_phone"
         const val KEY_SMS = "reminder_sms"
         const val KEY_REPEAT = "reminder_repeat"
+        const val KEY_BACKUP_FOLDER = "backup_folder"
+        const val KEY_AUTO_AT = "auto_backup_at"
+        const val KEY_AUTO_FILE = "auto_backup_file"
+        const val KEY_AUTO_ERROR = "auto_backup_error"
         const val DEFAULT_MODEL = "sarvam-m"
     }
 }

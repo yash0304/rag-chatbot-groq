@@ -125,6 +125,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Plain JVM unit tests for the date and calendar rules — the logic that decides when a
+    // reminder goes off. CI runs them before building, so a broken rule never ships.
+    testImplementation("junit:junit:4.13.2")
 }
 
 // ---------------------------------------------------------------------------
