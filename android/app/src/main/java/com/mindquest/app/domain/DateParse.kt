@@ -117,33 +117,50 @@ object DateParse {
         // Every match is tried, not just the first: "buy 2 kg sugar by 21st September" starts
         // with a number that isn't a date, and stopping there would lose the date entirely.
         // An explicit year ("21st March 2028") is taken as given rather than guessed.
-        Regex("""\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)\b(?:\s*,?\s*(\d{4})\b)?""").findAll(lower)
-            .firstOrNull { MONTHS.containsKey(it.groupValues[2]) }?.let { m ->
-                val month = MONTHS.getValue(m.groupValues[2])
-                val day = m.groupValues[1].toInt()
-                date = m.groupValues[3].toIntOrNull()
-                    ?.let { year -> runCatching { LocalDate.of(year, month, day) }.getOrNull() }
-                    ?: safeDate(now.toLocalDate(), month, day)
-                if (date != null) cut += m.range
+        val anchors = mutableListOf<Anchor>()
+        DAY_MONTH.findAll(lower).filter { MONTHS.containsKey(it.groupValues[2]) }.forEach { m ->
+            anchors += Anchor(m.range, MONTHS.getValue(m.groupValues[2]), m.groupValues[1].toInt(), m.groupValues[3].toIntOrNull())
+        }
+        MONTH_DAY.findAll(lower).filter { MONTHS.containsKey(it.groupValues[1]) }.forEach { m ->
+            if (anchors.none { it.range.first <= m.range.last && m.range.first <= it.range.last }) {
+                anchors += Anchor(m.range, MONTHS.getValue(m.groupValues[1]), m.groupValues[2].toInt(), m.groupValues[3].toIntOrNull())
             }
-        if (date == null) {
-            Regex("""\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:\s*,?\s*(\d{4})\b)?""").findAll(lower)
-                .firstOrNull { MONTHS.containsKey(it.groupValues[1]) }?.let { m ->
-                    val month = MONTHS.getValue(m.groupValues[1])
-                    val day = m.groupValues[2].toInt()
-                    date = m.groupValues[3].toIntOrNull()
-                        ?.let { year -> runCatching { LocalDate.of(year, month, day) }.getOrNull() }
-                        ?: safeDate(now.toLocalDate(), month, day)
-                    if (date != null) cut += m.range
+        }
+        val stepMonths = STEP_MONTHS[repeat]
+        val today = now.toLocalDate()
+        val at = time ?: DEFAULT_TIME
+        // "Starting 5th January" names the first one, so it is taken as said; without that the
+        // date is read as a point on the cycle.
+        val startsThen = Regex("""\b(starting|beginning)\b""").containsMatchIn(lower)
+        if (stepMonths != null && !startsThen && anchors.any { it.year == null }) {
+            // "Every 6 months, July 5 then January 5": each date is a point on the cycle, and
+            // the reminder goes on the nearest one still ahead — January, not next July.
+            val valid = anchors.filter { it.year == null && it.month in 1..12 && it.day in 1..31 }
+            date = valid.mapNotNull { nextAligned(it.month, it.day, stepMonths, today, at, now.toLocalTime()) }.minOrNull()
+            if (date != null) valid.forEachIndexed { i, anchor ->
+                cut += if (i == 0) anchor.range else withConnector(lower, anchor.range)
+            }
+        } else {
+            for (anchor in anchors) {
+                date = anchor.year
+                    ?.let { year -> runCatching { LocalDate.of(year, anchor.month, anchor.day) }.getOrNull() }
+                    ?: safeDate(today, anchor.month, anchor.day)
+                if (date != null) {
+                    cut += anchor.range
+                    break
                 }
+            }
         }
 
         // --- a bare day of the month: "on the 5th", "5th of every month" ---
         // The ordinal suffix is required, so "buy 2 kg" is never read as the 2nd. Lands on
         // the next 5th still ahead — this month's if there's time left in it, else next.
         if (date == null) {
-            Regex("""\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b""").find(lower)?.let { m ->
-                val day = m.groupValues[1].toInt()
+            // Something that comes round monthly also takes a plain number: "haircut every
+            // month at 15" is the 15th. Clock times were read above, so "at 9pm" is gone by now.
+            val bare = if (repeat in MONTHLY_ISH) BARE_DAY_LOOSE else BARE_DAY
+            bare.find(lower)?.let { m ->
+                val day = m.groupValues[1].ifEmpty { m.groupValues[2] }.toInt()
                 if (day in 1..31) {
                     val today = now.toLocalDate()
                     val at = time ?: DEFAULT_TIME
@@ -240,6 +257,45 @@ object DateParse {
         return clean(raw.trim(), cut)
     }
 
+    private data class Anchor(val range: IntRange, val month: Int, val day: Int, val year: Int?)
+
+    private val DAY_MONTH = Regex("""\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)\b(?:\s*,?\s*(\d{4})\b)?""")
+    private val MONTH_DAY = Regex("""\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:\s*,?\s*(\d{4})\b)?""")
+    private val BARE_DAY = Regex("""\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b""")
+    private val BARE_DAY_LOOSE = Regex(
+        """\b(?:(?:on|at)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?|(?:the\s+)?(\d{1,2})(?:st|nd|rd|th))\b""" +
+            """(?!\s*(?:am|pm|:|%|kg|km|rs|inr|min|mins|minutes?|hours?|hrs?|days?|weeks?|months?|years?)\b)""",
+    )
+    private val MONTHLY_ISH = setOf("monthly", "halfmonthly", "quarterly", "halfyearly")
+
+    /** Months between occurrences, for the cadences that are counted in months. */
+    private val STEP_MONTHS = mapOf("monthly" to 1, "quarterly" to 3, "halfyearly" to 6, "yearly" to 12)
+
+    /**
+     * The first date on the cycle through [month]/[day], every [stepMonths] months, that is
+     * still ahead. Starts a year back so a cycle whose named date has passed this year still
+     * finds its next point — July 5 every six months, asked in September, is January 5.
+     */
+    private fun nextAligned(
+        month: Int, day: Int, stepMonths: Int,
+        today: LocalDate, at: LocalTime, nowTime: LocalTime,
+    ): LocalDate? {
+        var ym = YearMonth.of(today.year - 1, month)
+        repeat(40) {
+            val d = ym.atDay(minOf(day, ym.lengthOfMonth()))
+            if (d.isAfter(today) || (d == today && at.isAfter(nowTime))) return d
+            ym = ym.plusMonths(stepMonths.toLong())
+        }
+        return null
+    }
+
+    /** A second date's range, widened to take the "then" / "and" joining it to the first. */
+    private fun withConnector(lower: String, range: IntRange): IntRange {
+        val before = Regex("""(?:,|&|\bthen\b|\band\b)\s*$""").find(lower.substring(0, range.first).trimEnd())
+            ?: return range
+        return before.range.first..range.last
+    }
+
     /** A date in the past almost always means the same day next year. */
     private fun safeDate(today: LocalDate, month: Int, day: Int): LocalDate? {
         if (month !in 1..12 || day !in 1..31) return null
@@ -262,7 +318,7 @@ object DateParse {
         return keep.toString()
             // One or more, because removing "every month" from "on the 5th of every month"
             // can leave connecting words stacked at the end ("… of the").
-            .replace(Regex("""(\s+(by|on|at|before|around|of|the))+\s*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""(\s+(by|on|at|before|around|of|the|from|starting|then|and))+\s*$""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\s{2,}"""), " ")
             .trim()
             .trim(',', '-', '.', ';')

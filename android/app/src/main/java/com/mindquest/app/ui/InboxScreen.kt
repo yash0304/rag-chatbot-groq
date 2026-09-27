@@ -5,12 +5,14 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -18,6 +20,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.AttachmentEntity
 import com.mindquest.app.data.FolderEntity
+import com.mindquest.app.data.KIND_THOUGHT
+import com.mindquest.app.data.isThought
 import com.mindquest.app.data.goalForCheckpoint
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.NoteEntity
@@ -36,35 +40,116 @@ import java.util.Locale
 private val timeFmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
 
 /**
- * Quick-capture inbox. Type a line, send it, and it lands as a note — with an optional
- * reminder. Notes can graduate into a Quest (earns XP) or into the Archives (searchable).
+ * The Inbox, in three parts: the Checklist (things to do, once or again and again), Goals
+ * (daily goals with a streak, and long-term targets), and Thoughts (things to remember,
+ * kept in folders). Each part has its own box to type into, so a line lands where it was
+ * typed.
  */
 @Composable
-fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
+fun InboxScreen(
+    repo: MindQuestRepository,
+    notify: (String) -> Unit,
+    segment: Int,
+    onSegment: (Int) -> Unit,
+) {
+    val notes by repo.observeNotes().collectAsState(emptyList())
+    val open = notes.count { !it.done && !it.isThought }
+    val thoughts = notes.count { it.isThought }
+    Column(Modifier.fillMaxSize()) {
+        Text(
+            "Inbox", style = MaterialTheme.typography.headlineMedium, color = Parchment,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+        )
+        TabRow(
+            selectedTabIndex = segment,
+            containerColor = MaterialTheme.colorScheme.background,
+            contentColor = Rune,
+        ) {
+            Tab(selected = segment == 0, onClick = { onSegment(0) }, text = { Text("✅ Checklist ($open)", maxLines = 1) })
+            Tab(selected = segment == 1, onClick = { onSegment(1) }, text = { Text("🎯 Goals", maxLines = 1) })
+            Tab(selected = segment == 2, onClick = { onSegment(2) }, text = { Text("💭 Thoughts ($thoughts)", maxLines = 1) })
+        }
+        Box(Modifier.weight(1f)) {
+            when (segment) {
+                0 -> ChecklistPane(repo, notify)
+                1 -> GoalsScreen(repo, notify, header = { DailyGoalsSection(repo, notify) })
+                else -> ThoughtsPane(repo, notify)
+            }
+        }
+    }
+}
+
+/** Which slice of the Checklist is showing. */
+private enum class ChecklistFilter(val label: String) {
+    All("All"), Repeating("🔁 Repeating"), Once("Once"), Done("✓ Done"),
+}
+
+/** Cadences in the order a person thinks of them, for the Repeating view's headings. */
+private val CADENCE_ORDER = listOf("daily", "weekdays", "weekly", "halfmonthly", "monthly", "quarterly", "halfyearly", "yearly")
+
+/**
+ * Where an open item sits by its date: late first, then today, and on out to "anytime" for
+ * the ones with no date at all.
+ */
+private fun whenGroup(n: NoteEntity, now: Long): Int {
+    val at = n.remindAt ?: return 5
+    val zone = java.time.ZoneId.systemDefault()
+    val today = java.time.LocalDate.now()
+    fun startOf(d: java.time.LocalDate) = d.atStartOfDay(zone).toInstant().toEpochMilli()
+    return when {
+        at < now -> 0
+        at < startOf(today.plusDays(1)) -> 1
+        at < startOf(today.plusDays(2)) -> 2
+        at < startOf(today.plusDays(7)) -> 3
+        else -> 4
+    }
+}
+
+private val WHEN_LABELS = listOf("⚠️ Overdue", "📅 Today", "Tomorrow", "This week", "Later", "📝 Anytime")
+
+@Composable
+private fun ChecklistPane(repo: MindQuestRepository, notify: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val allNotes by repo.observeNotes().collectAsState(emptyList())
     val notePhotos by repo.observeAttachments("note").collectAsState(emptyList())
     val photosByNote = notePhotos.groupBy { it.ownerId }
-    val categoryCounts by repo.observeNoteFolders().collectAsState(emptyMap())
-    val customFolders by repo.observeFolders().collectAsState(emptyList())
+    val allFolders by repo.observeFolders().collectAsState(emptyList())
+    val customFolders = allFolders.filter { !it.isThought }
     val customCounts by repo.observeFolderCounts().collectAsState(emptyMap())
-    // A selection is either a user-made folder or a category; the two never mix, so one
-    // nullable id each is clearer than a sealed type for two cases.
-    var folder by remember { mutableStateOf<String?>(null) }
-    var customFolder by remember { mutableStateOf<String?>(null) }
+    var customFolder by rememberSaveable { mutableStateOf<String?>(null) }
+    var filter by rememberSaveable { mutableStateOf(ChecklistFilter.All) }
     var newFolderOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<FolderEntity?>(null) }
     var editing by remember { mutableStateOf<NoteEntity?>(null) }
     val openFolder = customFolders.firstOrNull { it.id == customFolder }
-    val notes = allNotes.filter {
-        when {
-            customFolder != null -> it.folderId == customFolder
-            folder != null -> it.category == folder && it.folderId == null
-            else -> true
-        }
+    val inView = allNotes.filter { !it.isThought && (customFolder == null || it.folderId == customFolder) }
+    val openItems = inView.filter { !it.done }
+    val doneItems = inView.filter { it.done }.sortedByDescending { it.completedAt ?: it.updatedAt ?: it.createdAt }
+    val notes = when (filter) {
+        ChecklistFilter.All -> openItems
+        ChecklistFilter.Repeating -> openItems.filter { it.repeat != null }
+        ChecklistFilter.Once -> openItems.filter { it.repeat == null }
+        ChecklistFilter.Done -> doneItems
     }
-    val listState = rememberLazyListState()
+    val now = System.currentTimeMillis()
+    // Headed sections: by date for most views, by how often for the Repeating one.
+    val sections: List<Pair<String, List<NoteEntity>>> = when (filter) {
+        ChecklistFilter.Done -> listOf("✓ Done" to notes)
+        ChecklistFilter.Repeating -> notes.groupBy { it.repeat!! }
+            .toList()
+            .sortedBy { (c, _) -> CADENCE_ORDER.indexOf(c).let { if (it < 0) 99 else it } }
+            .map { (c, list) -> "🔁 ${Cadences.of(c).label.replaceFirstChar { it.uppercase() }}" to list.sortedBy { it.remindAt } }
+        else -> notes.groupBy { whenGroup(it, now) }
+            .toList()
+            .sortedBy { it.first }
+            .map { (g, list) ->
+                WHEN_LABELS[g] to list.sortedWith(
+                    compareByDescending<NoteEntity> { it.starred }.thenBy { it.remindAt ?: Long.MAX_VALUE }.thenBy { it.createdAt },
+                )
+            }
+    }
+    var asThought by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var pendingRemind by remember { mutableStateOf<Long?>(null) }
     // The category is shown before the note is sent, not applied silently afterwards. It
@@ -92,20 +177,18 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         if (customFolder != null) null else HabitParse.detect(input)
     }
     val asHabit = !asCheckpoint && !asGoal && habitGuess != null && !keepAsNote
-    val folderGuess = remember(input, customFolder, folder, customFolders) {
-        if (customFolder != null || folder != null) null
+    val folderGuess = remember(input, customFolder, customFolders) {
+        if (customFolder != null) null
         else FolderMatch.best(input, customFolders.map { it.name })?.let { customFolders[it] }
     }
     val dateGuess = remember(input) { DateParse.parse(input) }
     LaunchedEffect(input.isBlank()) {
         // A fresh line starts with fresh guesses.
-        if (input.isBlank()) { keepAsNote = false; skipFolder = false; skipDate = false }
+        if (input.isBlank()) { keepAsNote = false; skipFolder = false; skipDate = false; asThought = false }
     }
 
-    LaunchedEffect(input, categoryChosen, folder) {
-        // Typing inside a folder files it there: opening Shopping and adding a line plainly
-        // means "this is shopping", whatever the words happen to look like.
-        if (!categoryChosen) pendingCategory = folder ?: Categories.classify(input)
+    LaunchedEffect(input, categoryChosen) {
+        if (!categoryChosen) pendingCategory = Categories.classify(input)
     }
 
     val notifPermission = rememberLauncherForActivityResult(
@@ -125,7 +208,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     fun capture(spoken: String) {
         ensureNotifPermission()
         scope.launch {
-            val r = repo.captureNote(spoken, folderId = customFolder, category = folder)
+            val r = repo.captureNote(spoken, folderId = customFolder)
             notify(r.describe { timeFmt.format(Date(it)) })
         }
     }
@@ -137,8 +220,8 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 newFolderOpen = false
                 scope.launch {
                     val id = repo.createFolder(name)
-                    customFolder = id; folder = null
-                    notify("Folder “$name” created — everything you add now goes inside it.")
+                    customFolder = id
+                    notify("List “$name” created — everything you add now goes inside it.")
                 }
             },
         )
@@ -180,21 +263,11 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         )
     }
 
-    LaunchedEffect(notes.size) {
-        if (notes.isNotEmpty()) listState.animateScrollToItem(notes.lastIndex)
-    }
-
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Inbox", style = MaterialTheme.typography.headlineMedium, color = Parchment)
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 12.dp)) {
         Text(
-            when {
-                openFolder != null ->
-                    "${openFolder.name} — anything you add or say now lands in this folder."
-                folder != null ->
-                    "Showing ${Categories.of(folder).label}. Reminders stay exactly as you set them."
-                else ->
-                    "Jot anything — errands, reminders, habits. ★ what matters: it pays more XP and shows on Home."
-            },
+            if (openFolder != null) "${openFolder.name} — anything you add now lands in this list."
+            else "Errands and to-dos: “milk by 28th September”, “haircut every month on 15”, " +
+                "“health checkup every 6 months July 5 then January 5”. ★ what matters.",
             style = MaterialTheme.typography.bodySmall, color = Muted,
         )
         Spacer(Modifier.height(6.dp))
@@ -202,94 +275,126 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             folders = customFolders,
             counts = customCounts,
             selected = customFolder,
-            onSelect = { customFolder = it; if (it != null) folder = null },
+            onSelect = { customFolder = it },
             onCreate = { newFolderOpen = true },
             onRename = { renaming = it },
             onDelete = { target ->
                 customFolder = null
                 scope.launch {
                     repo.deleteFolder(target.id)
-                    notify("Folder “${target.name}” removed. Its lines are still in the Inbox.")
+                    notify("List “${target.name}” removed. Its items are still in the Checklist.")
                 }
             },
+            onMove = { target ->
+                customFolder = null
+                scope.launch {
+                    repo.setFolderKind(target.id, KIND_THOUGHT)
+                    notify("🗂 ${target.name} → 💭 Thoughts, with everything in it.")
+                }
+            },
+            moveLabel = "Move to 💭 Thoughts",
+            newLabel = "+ New list",
         )
-        Spacer(Modifier.height(4.dp))
-        FolderRow(
-            counts = categoryCounts,
-            selected = folder,
-            onSelect = { folder = it; if (it != null) customFolder = null },
-        )
-        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ChecklistFilter.entries.forEach { f ->
+                val n = when (f) {
+                    ChecklistFilter.All -> openItems.size
+                    ChecklistFilter.Repeating -> openItems.count { it.repeat != null }
+                    ChecklistFilter.Once -> openItems.count { it.repeat == null }
+                    ChecklistFilter.Done -> doneItems.size
+                }
+                FilterChip(
+                    selected = filter == f,
+                    onClick = { filter = f },
+                    label = { Text("${f.label} ($n)", style = MaterialTheme.typography.labelSmall) },
+                )
+            }
+        }
 
         LazyColumn(
-            state = listState,
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Habits sit above the to-do list: they're what today is made of, and they're
-            // ticked once per day or week rather than once and for all.
-            if (customFolder == null && folder == null) {
-                item { HabitsBlock(repo, notify) }
-            }
             if (notes.isEmpty()) {
                 item {
                     Text(
                         when {
+                            filter == ChecklistFilter.Done -> "Nothing ticked off yet."
+                            filter == ChecklistFilter.Repeating ->
+                                "Nothing repeating yet. Try “pay rent on the 5th every month”."
                             openFolder != null ->
                                 "“${openFolder.name}” is empty. Add the first item below, by thumb or by mic."
-                            folder != null -> "Nothing in ${Categories.of(folder).label} yet."
-                            else -> "Nothing captured yet. Type below — “call the plumber”, “milk, eggs, rice”…"
+                            else -> "All clear. Type below — “call the plumber tomorrow”, “milk, eggs, rice”…"
                         },
                         color = Muted, style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
-            items(notes) { note ->
-                NoteCard(
-                    note = note,
-                    photos = photosByNote[note.id].orEmpty(),
-                    onAddPhoto = { path -> scope.launch { repo.addAttachment("note", note.id, path) } },
-                    onRemovePhoto = { scope.launch { repo.deleteAttachment(it.id) } },
-                    onToggleDone = {
-                        scope.launch {
-                            val xp = repo.xpFor(note)
-                            val firstTime = !note.done && note.completedAt == null
-                            // A repeating note rolls forward instead of ticking; say where to.
-                            val next = repo.setNoteDone(note.id, !note.done)
-                            when {
-                                next != null -> notify("✓ +$xp XP — next one ${timeFmt.format(Date(next))}.")
-                                firstTime -> notify("✓ Done · +$xp XP")
-                            }
-                        }
-                    },
-                    onEdit = { editing = note },
-                    onRemind = {
-                        ensureNotifPermission()
-                        pickDateTime(context) { at ->
+            sections.forEach { (heading, list) ->
+                item(key = "h-$heading") {
+                    Text(
+                        "$heading (${list.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (heading.startsWith("⚠️")) Ember else Rune,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                items(list, key = { it.id }) { note ->
+                    NoteCard(
+                        note = note,
+                        photos = photosByNote[note.id].orEmpty(),
+                        onAddPhoto = { path -> scope.launch { repo.addAttachment("note", note.id, path) } },
+                        onRemovePhoto = { scope.launch { repo.deleteAttachment(it.id) } },
+                        onToggleDone = {
                             scope.launch {
-                                repo.setNoteReminder(note.id, at)
-                                notify("Reminder set for ${timeFmt.format(Date(at))}")
+                                val xp = repo.xpFor(note)
+                                val firstTime = !note.done && note.completedAt == null
+                                // A repeating note rolls forward instead of ticking; say where to.
+                                val next = repo.setNoteDone(note.id, !note.done)
+                                when {
+                                    next != null -> notify("✓ +$xp XP — next one ${timeFmt.format(Date(next))}.")
+                                    firstTime -> notify("✓ Done · +$xp XP")
+                                }
                             }
-                        }
-                    },
-                    onClearRemind = {
-                        scope.launch { repo.setNoteReminder(note.id, null); notify("Reminder cleared.") }
-                    },
-                    onStar = {
-                        scope.launch {
-                            repo.setNoteStarred(note.id, !note.starred)
-                            if (!note.starred) notify("★ Starred — worth ${MindQuestRepository.STARRED_TASK_XP} XP when done.")
-                        }
-                    },
-                    onArchive = {
-                        scope.launch {
-                            if (repo.noteToArchive(note.id)) notify("Saved to Archives — now searchable.")
-                            else notify("Already in the Archives.")
-                        }
-                    },
-                    onDelete = { scope.launch { repo.deleteNote(note.id) } },
-                    onCategory = { scope.launch { repo.setNoteCategory(note.id, it) } },
-                )
+                        },
+                        onEdit = { editing = note },
+                        onRemind = {
+                            ensureNotifPermission()
+                            pickDateTime(context) { at ->
+                                scope.launch {
+                                    repo.setNoteReminder(note.id, at)
+                                    notify("Reminder set for ${timeFmt.format(Date(at))}")
+                                }
+                            }
+                        },
+                        onClearRemind = {
+                            scope.launch { repo.setNoteReminder(note.id, null); notify("Reminder cleared.") }
+                        },
+                        onStar = {
+                            scope.launch {
+                                repo.setNoteStarred(note.id, !note.starred)
+                                if (!note.starred) notify("★ Starred — worth ${MindQuestRepository.STARRED_TASK_XP} XP when done.")
+                            }
+                        },
+                        onArchive = {
+                            scope.launch {
+                                if (repo.noteToArchive(note.id)) notify("Saved to Archives — now searchable.")
+                                else notify("Already in the Archives.")
+                            }
+                        },
+                        onDelete = { scope.launch { repo.deleteNote(note.id) } },
+                        onCategory = { scope.launch { repo.setNoteCategory(note.id, it) } },
+                        onToThought = {
+                            scope.launch {
+                                repo.setNoteKind(note.id, KIND_THOUGHT)
+                                notify("💭 Moved to Thoughts.")
+                            }
+                        },
+                    )
+                }
             }
         }
 
@@ -346,13 +451,22 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     )
                     Spacer(Modifier.width(6.dp))
                     CategoryChip(pendingCategory) { pendingCategory = it; categoryChosen = true }
+                    // Something to remember rather than do — an address, a number — belongs
+                    // in Thoughts. Offered only when there's no date that would make it a task.
+                    if (dateGuess.dueAt == null && pendingRemind == null && customFolder == null) {
+                        FilterChip(
+                            selected = asThought,
+                            onClick = { asThought = !asThought },
+                            label = { Text("💭 Thought", style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
                     if (goalGuess != null) {
                         TextButton(onClick = { keepAsNote = false }) {
                             Text("🎯 make it a goal", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
-                if (folderGuess != null && !skipFolder) {
+                if (folderGuess != null && !skipFolder && !asThought) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "🗂 Into “${folderGuess.name}”",
@@ -389,7 +503,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                 value = input,
                 onValueChange = { input = it },
                 placeholder = {
-                    Text(openFolder?.let { "Add to ${it.name}…" } ?: "Capture a thought…")
+                    Text(openFolder?.let { "Add to ${it.name}…" } ?: "Add a to-do…")
                 },
                 modifier = Modifier.weight(1f),
                 maxLines = 3,
@@ -420,6 +534,7 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                     val chosen = categoryChosen
                     val intoFolder = customFolder ?: folderGuess?.takeIf { !skipFolder }?.id
                     val intoFolderName = if (customFolder == null) folderGuess?.takeIf { !skipFolder }?.name else null
+                    val thought = asThought && !asGoal && !asHabit && !asCheckpoint && at == null
                     input = ""; pendingRemind = null; categoryChosen = false
                     if (at != null) ensureNotifPermission()
                     scope.launch {
@@ -434,13 +549,18 @@ fun InboxScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
                         }
                         if (habit != null) {
                             repo.createHabitFrom(habit)
-                            notify("🔁 ${habit.title} — a ${Cadences.of(habit.cadence).label} habit. Tick it above.")
+                            notify("🔁 ${habit.title} — a ${Cadences.of(habit.cadence).label} daily goal → 🎯 Goals.")
                             return@launch
                         }
                         if (goal != null) {
                             repo.createTargetGoal(goal, narrative = raw)
                             ensureNotifPermission()
                             notify("🎯 ${goal.title} → Goals · check-in on the 1st of each month")
+                            return@launch
+                        }
+                        if (thought) {
+                            repo.addNote(raw, category = cat, categoryChosen = chosen, kind = KIND_THOUGHT)
+                            notify("💭 Saved to Thoughts.")
                             return@launch
                         }
                         val id = repo.addNote(text, at, cat, chosen, repeat)
@@ -476,6 +596,7 @@ private fun NoteCard(
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     onCategory: (String) -> Unit,
+    onToThought: () -> Unit,
 ) {
     Card {
         Column(Modifier.padding(12.dp)) {
@@ -530,6 +651,7 @@ private fun NoteCard(
                 if (note.docId == null) {
                     TextButton(onClick = onArchive) { Text("→ Archive", style = MaterialTheme.typography.labelSmall) }
                 }
+                TextButton(onClick = onToThought) { Text("💭", style = MaterialTheme.typography.labelSmall) }
                 TextButton(onClick = onDelete) {
                     Text("Delete", style = MaterialTheme.typography.labelSmall, color = Ember)
                 }

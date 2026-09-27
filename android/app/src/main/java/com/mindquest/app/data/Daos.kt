@@ -267,6 +267,9 @@ interface FolderDao {
 
     @Query("UPDATE notes SET folderId = NULL WHERE folderId = :id")
     suspend fun detachNotes(id: String)
+
+    @Query("UPDATE notes SET kind = :kind WHERE folderId = :id")
+    suspend fun setNotesKind(id: String, kind: String?)
 }
 
 @Dao

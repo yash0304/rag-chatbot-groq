@@ -295,6 +295,8 @@ data class FolderEntity(
     val name: String,
     val icon: String = "🗂",
     val createdAt: Long = System.currentTimeMillis(),
+    /** Which part of the Inbox it lives in: null for Checklist, "thought" for Thoughts. */
+    val kind: String? = null,
 )
 
 /**
@@ -331,7 +333,18 @@ data class NoteEntity(
     /** First time this was ticked off; XP is paid then and never again for the same item. */
     val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * Null for a Checklist item — something to do — or "thought" for something to remember:
+     * the ATM on the way to the office, the puncture man's number. Thoughts are never ticked.
+     */
+    val kind: String? = null,
 )
+
+/** The value of [NoteEntity.kind] and [FolderEntity.kind] for the Thoughts part of the Inbox. */
+const val KIND_THOUGHT = "thought"
+
+val NoteEntity.isThought: Boolean get() = kind == KIND_THOUGHT
+val FolderEntity.isThought: Boolean get() = kind == KIND_THOUGHT
 
 /**
  * A note's meaning, as a vector, so search can find "that restaurant in Colaba" from a note
