@@ -31,7 +31,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         GoalProgressEntity::class,
         GoalCheckpointEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -98,6 +98,17 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /**
+         * v14→v15: the Inbox splits into Checklist and Thoughts. Notes and folders gain a
+         * nullable kind; everything already there stays a Checklist item until moved.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `kind` TEXT")
+                db.execSQL("ALTER TABLE `folders` ADD COLUMN `kind` TEXT")
             }
         }
 
@@ -271,7 +282,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
             return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
                 // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                 // as a last resort on downgrade, which shouldn't happen in normal use.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
                 .build()

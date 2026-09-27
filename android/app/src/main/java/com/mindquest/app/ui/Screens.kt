@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.HabitEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.data.isTarget
+import com.mindquest.app.data.isThought
 import com.mindquest.app.domain.GoalMath
 import com.mindquest.app.domain.GoalParse
 import com.mindquest.app.data.ProfileEntity
@@ -165,7 +166,7 @@ fun DashboardScreen(repo: MindQuestRepository, profile: ProfileEntity, notify: (
         val endOfToday = today.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val due = notes.filter { !it.done && it.remindAt != null && it.remindAt <= endOfToday }
             .sortedBy { it.remindAt }
-        val starred = notes.filter { !it.done && it.starred && it !in due }
+        val starred = notes.filter { !it.done && it.starred && !it.isThought && it !in due }
         val todayList = (due + starred).take(8)
         item { Text("📥 Today", style = MaterialTheme.typography.titleMedium, color = Rune) }
         if (todayList.isEmpty()) item { Text("Nothing due today. Star an Inbox item to pin it here.", color = Muted) }

@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import com.mindquest.app.data.HabitEntity
 import com.mindquest.app.data.MindQuestRepository
 import com.mindquest.app.domain.Cadences
+import com.mindquest.app.domain.HabitParse
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 
@@ -25,7 +26,7 @@ import kotlinx.coroutines.launch
  * and keep their streaks. Everything else about one lives behind its ⋯.
  */
 @Composable
-fun HabitsBlock(repo: MindQuestRepository, notify: (String) -> Unit) {
+fun HabitsBlock(repo: MindQuestRepository, notify: (String) -> Unit, title: String = "🔁 Habits") {
     val scope = rememberCoroutineScope()
     val habits by repo.observeHabits().collectAsState(emptyList())
     if (habits.isEmpty()) return
@@ -42,7 +43,7 @@ fun HabitsBlock(repo: MindQuestRepository, notify: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "🔁 Habits",
+                    title,
                     style = MaterialTheme.typography.titleSmall, color = Rune, fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(8.dp))
@@ -208,4 +209,66 @@ private fun HabitOptionsDialog(
             }
         },
     )
+}
+
+/**
+ * The Goals part of the Inbox starts with daily goals — 5000 steps, vitamins, a weekly deep
+ * clean — because they're what today is made of. Said the way you'd say it, or typed plainly
+ * with the how-often picked below.
+ */
+@Composable
+fun DailyGoalsSection(repo: MindQuestRepository, notify: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf("") }
+    var cadence by remember { mutableStateOf("daily") }
+    val guess = remember(text) { HabitParse.detect(text) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("🔁 Daily goals", style = MaterialTheme.typography.titleMedium, color = Rune)
+        Text(
+            "What you do every day or every week — tick it for a streak. A nudge comes only if it isn't done.",
+            style = MaterialTheme.typography.bodySmall, color = Muted,
+        )
+        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    text, { text = it },
+                    placeholder = { Text("5000 steps every day at 9pm") },
+                    singleLine = true, modifier = Modifier.weight(1f),
+                )
+                MicButton { text = it }
+            }
+            if (text.isNotBlank()) {
+                if (guess != null) {
+                    Text(
+                        "🔁 ${guess.title} · ${Cadences.of(guess.cadence).label}" +
+                            (guess.minuteOfDay?.let { " · nudge ${Reminders.formatTimeOfDay(it)}" } ?: ""),
+                        style = MaterialTheme.typography.labelSmall, color = Rune,
+                    )
+                } else {
+                    CadenceRow(selected = cadence, onSelect = { cadence = it })
+                }
+            }
+            Button(
+                enabled = text.isNotBlank(),
+                onClick = {
+                    val raw = text.trim()
+                    val parsed = guess
+                    val chosen = cadence
+                    text = ""
+                    scope.launch {
+                        if (parsed != null) {
+                            repo.createHabitFrom(parsed)
+                            notify("🔁 ${parsed.title} — ${Cadences.of(parsed.cadence).label}.")
+                        } else {
+                            val title = raw.replaceFirstChar { it.uppercase() }
+                            repo.createHabit(title, chosen)
+                            notify("🔁 $title — ${Cadences.of(chosen).label}.")
+                        }
+                    }
+                },
+                modifier = Modifier.align(Alignment.End),
+            ) { Text("Add") }
+        } }
+        HabitsBlock(repo, notify, title = "🔁 Your daily goals")
+    }
 }

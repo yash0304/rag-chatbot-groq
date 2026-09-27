@@ -10,7 +10,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Insights
@@ -54,7 +53,6 @@ private enum class AppState { Loading, Onboarding, Locked, Ready }
 private enum class HomeTab(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Filled.Home),
     Inbox("Inbox", Icons.Filled.Inbox),
-    Goals("Goals", Icons.Filled.Flag),
     Archives("Archives", Icons.AutoMirrored.Filled.MenuBook),
     Progress("Progress", Icons.Filled.Insights),
 }
@@ -194,6 +192,8 @@ private fun HomeShell(repo: MindQuestRepository) {
     // Settings → Backup is the only nesting; Back walks it, then returns to Home, then leaves.
     val pages = remember { mutableStateListOf<Page>() }
     var archivesTab by rememberSaveable { mutableIntStateOf(0) }
+    // Checklist, Goals or Thoughts — kept here so search can open the right one.
+    var inboxSegment by rememberSaveable { mutableIntStateOf(0) }
     val profile by repo.observeProfile().collectAsState(initial = null)
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -216,8 +216,9 @@ private fun HomeShell(repo: MindQuestRepository) {
             onOpen = { kind ->
                 when (kind) {
                     GlobalKind.Document -> { archivesTab = 0; open(HomeTab.Archives) }
-                    GlobalKind.Goal -> open(HomeTab.Goals)
-                    GlobalKind.Note, GlobalKind.Quest, GlobalKind.Habit, GlobalKind.Folder -> open(HomeTab.Inbox)
+                    GlobalKind.Goal, GlobalKind.Habit -> { inboxSegment = 1; open(HomeTab.Inbox) }
+                    GlobalKind.Thought -> { inboxSegment = 2; open(HomeTab.Inbox) }
+                    GlobalKind.Note, GlobalKind.Quest, GlobalKind.Folder -> { inboxSegment = 0; open(HomeTab.Inbox) }
                 }
             },
         )
@@ -297,8 +298,7 @@ private fun HomeShell(repo: MindQuestRepository) {
                 Page.Backup -> DataScreen(repo, notify)
                 null -> when (tab) {
                     HomeTab.Home -> if (p != null) DashboardScreen(repo, p, notify)
-                    HomeTab.Inbox -> InboxScreen(repo, notify)
-                    HomeTab.Goals -> GoalsScreen(repo, notify)
+                    HomeTab.Inbox -> InboxScreen(repo, notify, inboxSegment) { inboxSegment = it }
                     HomeTab.Archives -> ArchivesHub(repo, notify, archivesTab) { archivesTab = it }
                     HomeTab.Progress -> ProgressScreen(repo, p, notify)
                 }

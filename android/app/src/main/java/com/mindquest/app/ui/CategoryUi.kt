@@ -101,6 +101,10 @@ fun CustomFolderRow(
     onCreate: () -> Unit,
     onRename: (FolderEntity) -> Unit = {},
     onDelete: (FolderEntity) -> Unit = {},
+    /** Moves the open folder to the other side of the Inbox; [moveLabel] names where. */
+    onMove: ((FolderEntity) -> Unit)? = null,
+    moveLabel: String = "",
+    newLabel: String = "+ New folder",
 ) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -133,6 +137,12 @@ fun CustomFolderRow(
                             text = { Text("Rename") },
                             onClick = { menu = false; onRename(folder) },
                         )
+                        if (onMove != null) {
+                            DropdownMenuItem(
+                                text = { Text(moveLabel) },
+                                onClick = { menu = false; onMove(folder) },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Delete folder") },
                             onClick = { menu = false; onDelete(folder) },
@@ -143,7 +153,7 @@ fun CustomFolderRow(
         }
         AssistChip(
             onClick = onCreate,
-            label = { Text("+ New folder", style = MaterialTheme.typography.labelSmall) },
+            label = { Text(newLabel, style = MaterialTheme.typography.labelSmall) },
         )
     }
 }

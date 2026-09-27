@@ -97,6 +97,8 @@ data class CaptureResult(
     val checkpointMet: Boolean = false,
     /** Set when the line was a habit — "walk 5000 steps every day" — with a streak. */
     val habit: HabitParse.Habit? = null,
+    /** Kept in Thoughts rather than the Checklist. */
+    val thought: Boolean = false,
 ) {
     /** One line saying where it went — for the toast after the mic, the widget or Share. */
     fun describe(stamp: (Long) -> String): String {
@@ -112,6 +114,7 @@ data class CaptureResult(
         goal?.let {
             return "🎯 ${it.title} by ${Cadences.formatTarget(it.deadline.toString())} → Goals · check-in on the 1st"
         }
+        if (thought) return "💭 $text → " + (folderName?.let { "🗂 $it" } ?: "Thoughts")
         return buildString {
             append(text)
             append(" → ")
@@ -138,7 +141,8 @@ enum class GlobalKind(val label: String, val icon: String) {
     Document("Archives", "📜"),
     Quest("Inbox", "⚔️"),
     Habit("Inbox · habit", "🔁"),
-    Goal("Goals", "🎯"),
+    Thought("Inbox · thought", "💭"),
+    Goal("Inbox · goal", "🎯"),
     Folder("Inbox folder", "🗂"),
 }
 
@@ -1283,6 +1287,7 @@ class MindQuestRepository(private val context: Context) {
         category: String? = null,
         categoryChosen: Boolean = false,
         repeat: String? = null,
+        kind: String? = null,
     ): String {
         val id = UUID.randomUUID().toString()
         val body = text.trim()
@@ -1293,6 +1298,7 @@ class MindQuestRepository(private val context: Context) {
                 // Confirmed at capture, so nothing downstream may second-guess it.
                 categoryLocked = categoryChosen,
                 repeat = repeat?.takeIf { remindAt != null },
+                kind = kind,
             ),
         )
         if (remindAt != null) Reminders.schedule(context, id, text.trim(), remindAt)
@@ -1558,11 +1564,32 @@ class MindQuestRepository(private val context: Context) {
      * should arrive already looking like what it is, and one more decision at the moment of
      * making a list is one reason not to make it.
      */
-    suspend fun createFolder(name: String, icon: String? = null): String {
+    suspend fun createFolder(name: String, icon: String? = null, kind: String? = null): String {
         val id = UUID.randomUUID().toString()
         val glyph = icon ?: Categories.of(Categories.classify(name)).icon
-        folderDao.upsert(FolderEntity(id = id, name = name.trim(), icon = glyph))
+        folderDao.upsert(FolderEntity(id = id, name = name.trim(), icon = glyph, kind = kind))
         return id
+    }
+
+    /**
+     * Move a whole folder between Checklist and Thoughts, with everything in it — "Way to
+     * office" made as a checklist is really a set of things to remember. Reminders are kept.
+     */
+    suspend fun setFolderKind(id: String, kind: String?) {
+        val folder = folderDao.all().firstOrNull { it.id == id } ?: return
+        folderDao.upsert(folder.copy(kind = kind))
+        folderDao.setNotesKind(id, kind)
+    }
+
+    /**
+     * Move one line between Checklist and Thoughts. It leaves a folder that belongs to the
+     * other side, so it never sits in a folder that isn't shown where the line now is.
+     */
+    suspend fun setNoteKind(id: String, kind: String?) {
+        val note = noteDao.get(id) ?: return
+        val folder = note.folderId?.let { fid -> folderDao.all().firstOrNull { it.id == fid } }
+        val keepFolder = folder != null && folder.kind == kind
+        noteDao.upsert(note.copy(kind = kind, folderId = if (keepFolder) note.folderId else null))
     }
 
     suspend fun renameFolder(id: String, name: String) {
@@ -1606,7 +1633,19 @@ class MindQuestRepository(private val context: Context) {
         spoken: String,
         folderId: String? = null,
         category: String? = null,
+        kind: String? = null,
     ): CaptureResult {
+        // A thought is kept exactly as said: "Starbucks closes early on Sunday" is something
+        // to remember, not a reminder for Sunday, and nothing in it is routed elsewhere.
+        if (kind == KIND_THOUGHT) {
+            val text = spoken.trim()
+            val chosen = category ?: Categories.classify(text)
+            val folder = if (folderId != null) folderDao.all().firstOrNull { it.id == folderId }
+            else bestFolderFor(text, KIND_THOUGHT)
+            val id = addNote(text = text, category = chosen, categoryChosen = category != null, kind = KIND_THOUGHT)
+            if (folder != null) setNoteFolder(id, folder.id)
+            return CaptureResult(id, text, null, chosen, folder?.id, folderName = folder?.name, thought = true)
+        }
         if (folderId == null) {
             // A level by a date, in the unit of a goal already running, is a checkpoint on
             // the way to it — "90 kg by 1st October" inside "80 kg by March 2027" — not a
@@ -1654,15 +1693,15 @@ class MindQuestRepository(private val context: Context) {
     }
 
     /** The user folder a line belongs in, if it shares a word with the folder's name. */
-    suspend fun bestFolderFor(text: String): FolderEntity? {
-        val folders = folderDao.all()
+    suspend fun bestFolderFor(text: String, kind: String? = null): FolderEntity? {
+        val folders = folderDao.all().filter { it.kind == kind }
         return FolderMatch.best(text, folders.map { it.name })?.let { folders[it] }
     }
 
     /** Open note counts per category, for the Inbox folders. */
     fun observeNoteFolders(): Flow<Map<String, Int>> =
         noteDao.observeNotes().map { notes ->
-            notes.filter { !it.done }
+            notes.filter { !it.done && !it.isThought }
                 .groupingBy { it.category ?: "general" }
                 .eachCount()
         }
@@ -1752,7 +1791,8 @@ class MindQuestRepository(private val context: Context) {
                     val where = note.folderId?.let { folderNames[it] }?.let { "🗂 $it" }
                         ?: Categories.of(note.category).let { c -> "${c.icon} ${c.label}" }
                     hits += GlobalHit(
-                        kind = GlobalKind.Note, title = note.text.take(120),
+                        kind = if (note.isThought) GlobalKind.Thought else GlobalKind.Note,
+                        title = note.text.take(120),
                         subtitle = where + if (note.done) " · done" else "",
                         refId = note.id, score = score,
                     )
@@ -1762,7 +1802,12 @@ class MindQuestRepository(private val context: Context) {
             folderDao.all()
                 .filter { f -> words.isNotEmpty() && words.all { it in f.name.lowercase() } }
                 .take(perKind)
-                .forEach { hits += GlobalHit(GlobalKind.Folder, "${it.icon} ${it.name}", "folder", it.id) }
+                .forEach {
+                    hits += GlobalHit(
+                        if (it.isThought) GlobalKind.Thought else GlobalKind.Folder,
+                        "${it.icon} ${it.name}", "folder", it.id,
+                    )
+                }
 
             search(q, perKind).forEach {
                 hits += GlobalHit(

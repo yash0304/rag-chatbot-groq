@@ -39,7 +39,12 @@ private val readingFmt = SimpleDateFormat("d MMM", Locale.getDefault())
  * the 1st of each month. Story arcs (a goal broken into steps) still live here too, below.
  */
 @Composable
-fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
+fun GoalsScreen(
+    repo: MindQuestRepository,
+    notify: (String) -> Unit,
+    /** Shown above the long-term goals when Goals sits inside the Inbox: the daily goals. */
+    header: (@Composable () -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     val goals by repo.observeGoals().collectAsState(emptyList())
     val milestones by repo.observeAllMilestones().collectAsState(emptyList())
@@ -112,8 +117,13 @@ fun GoalsScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
     }
 
     LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (header != null) item { header() }
         item {
-            Text("Goals", style = MaterialTheme.typography.headlineMedium, color = Parchment)
+            if (header == null) {
+                Text("Goals", style = MaterialTheme.typography.headlineMedium, color = Parchment)
+            } else {
+                Text("🎯 Long-term goals", style = MaterialTheme.typography.titleMedium, color = Rune)
+            }
             Text(
                 "Where you want to be, and by when. Write it the way you'd say it.",
                 style = MaterialTheme.typography.bodySmall, color = Muted,
