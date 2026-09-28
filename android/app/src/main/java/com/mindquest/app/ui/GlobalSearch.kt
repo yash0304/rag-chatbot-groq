@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 fun GlobalSearchSheet(
     repo: MindQuestRepository,
     onDismiss: () -> Unit,
-    onOpen: (GlobalKind) -> Unit,
+    onOpen: (GlobalHit) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
@@ -76,7 +76,7 @@ fun GlobalSearchSheet(
                     items(hits) { hit ->
                         Card(
                             Modifier.fillMaxWidth().clickable {
-                                scope.launch { onOpen(hit.kind); onDismiss() }
+                                scope.launch { onOpen(hit); onDismiss() }
                             },
                         ) {
                             Column(Modifier.padding(12.dp)) {

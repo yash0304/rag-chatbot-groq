@@ -54,7 +54,8 @@ fun NarratorScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
             Column {
                 Text("The Narrator", style = MaterialTheme.typography.headlineMedium, color = Parchment)
                 Text(
-                    if (aiOn) "Answers from your archives, via Sarvam." else "Retrieval mode — add a Sarvam key in Settings for spoken answers.",
+                    repo.aiName()?.let { "Answers from your notes and archives, with $it." }
+                        ?: "Finds it in your notes and archives. Install the on-phone AI in Settings for written answers.",
                     style = MaterialTheme.typography.bodySmall, color = Muted,
                 )
             }
@@ -190,6 +191,7 @@ fun SettingsScreen(repo: MindQuestRepository, notify: (String) -> Unit, onOpenBa
                 Text("›", style = MaterialTheme.typography.titleLarge, color = Muted)
             }
         }
+        LocalAiCard(notify)
         Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Sarvam AI", fontWeight = FontWeight.Bold, color = Parchment)
             Text(

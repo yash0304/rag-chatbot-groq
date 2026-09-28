@@ -223,7 +223,12 @@ fun DailyGoalsSection(repo: MindQuestRepository, notify: (String) -> Unit) {
     var cadence by remember { mutableStateOf("daily") }
     val guess = remember(text) { HabitParse.detect(text) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("🔁 Daily goals", style = MaterialTheme.typography.titleMedium, color = Rune)
+        var counting by remember { mutableStateOf(false) }
+        if (counting) RepCounterScreen(repo, notify) { counting = false }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🔁 Daily goals", style = MaterialTheme.typography.titleMedium, color = Rune, modifier = Modifier.weight(1f))
+            AssistChip(onClick = { counting = true }, label = { Text("🏋️ Count reps") })
+        }
         Text(
             "What you do every day or every week — tick it for a streak. A nudge comes only if it isn't done.",
             style = MaterialTheme.typography.bodySmall, color = Muted,

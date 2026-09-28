@@ -32,8 +32,9 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         GoalCheckpointEntity::class,
         ScrapPageEntity::class,
         ScrapItemEntity::class,
+        PhotoIndexEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -51,6 +52,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun attachmentDao(): AttachmentDao
     abstract fun noteVectorDao(): NoteVectorDao
     abstract fun scrapDao(): ScrapDao
+    abstract fun photoIndexDao(): PhotoIndexDao
 
     companion object {
         @Volatile
@@ -101,6 +103,16 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /** v16→v17: what's in each photo, for search. Additive, and filled in lazily. */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `photo_index` (`attachmentId` TEXT NOT NULL, `labels` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, `indexedAt` INTEGER NOT NULL, PRIMARY KEY(`attachmentId`))",
+                )
             }
         }
 
@@ -303,7 +315,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
             return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
                 // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                 // as a last resort on downgrade, which shouldn't happen in normal use.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
                 .build()

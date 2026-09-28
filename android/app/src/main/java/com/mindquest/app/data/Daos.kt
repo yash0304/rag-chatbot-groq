@@ -440,3 +440,18 @@ interface ScrapDao {
     @Query("DELETE FROM scrap_items WHERE id = :id")
     suspend fun deleteItem(id: String)
 }
+
+@Dao
+interface PhotoIndexDao {
+    @Upsert
+    suspend fun upsert(row: PhotoIndexEntity)
+
+    @Query("SELECT * FROM photo_index")
+    suspend fun all(): List<PhotoIndexEntity>
+
+    @Query("SELECT attachmentId FROM photo_index")
+    suspend fun indexedIds(): List<String>
+
+    @Query("DELETE FROM photo_index WHERE attachmentId NOT IN (SELECT id FROM attachments)")
+    suspend fun pruneOrphans()
+}

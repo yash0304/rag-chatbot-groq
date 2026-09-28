@@ -51,7 +51,6 @@ fun PhotoStrip(
 ) {
     val context = LocalContext.current
     var viewing by remember { mutableStateOf<AttachmentEntity?>(null) }
-    var pendingCapture by remember { mutableStateOf<File?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
@@ -59,15 +58,7 @@ fun PhotoStrip(
         uri?.let { PhotoStore.importFrom(context, it)?.let { file -> onAdd(file.absolutePath) } }
     }
 
-    val takePhoto = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture(),
-    ) { saved ->
-        val file = pendingCapture
-        pendingCapture = null
-        // A cancelled capture leaves an empty file behind; clear it rather than keeping a
-        // zero-byte photo that would render as a blank square forever.
-        if (saved && file != null && file.length() > 0) onAdd(file.absolutePath) else file?.delete()
-    }
+    val takePhoto = rememberTakePhoto { file -> onAdd(file.absolutePath) }
 
     viewing?.let { photo ->
         PhotoViewer(
@@ -88,19 +79,7 @@ fun PhotoStrip(
         photos.forEach { photo ->
             Thumbnail(photo.path, Modifier.size(64.dp).clickable { viewing = photo })
         }
-        TextButton(onClick = {
-            val file = PhotoStore.newFile(context)
-            pendingCapture = file
-            val uri = runCatching {
-                FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-            }.getOrNull()
-            if (uri == null) {
-                pendingCapture = null
-                file.delete()
-            } else {
-                takePhoto.launch(uri)
-            }
-        }) { Text("📷", style = MaterialTheme.typography.titleMedium) }
+        TextButton(onClick = takePhoto) { Text("📷", style = MaterialTheme.typography.titleMedium) }
         TextButton(onClick = { pickImage.launch("image/*") }) {
             Text("🖼", style = MaterialTheme.typography.titleMedium)
         }

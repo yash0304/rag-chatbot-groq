@@ -68,7 +68,7 @@ fun ArchivesScreen(repo: MindQuestRepository, notify: (String) -> Unit) {
         if (granted) startRecording() else notify("Microphone permission is needed for voice notes.")
     }
     fun onMic() {
-        if (!repo.aiConfigured()) { notify("Add a Sarvam key in Settings to use voice notes."); return }
+        if (!repo.aiConfigured()) { notify("Install the on-phone AI (or add a Sarvam key) in Settings to write down voice notes."); return }
         if (recording) {
             recording = false
             val wav = recorder.stop()

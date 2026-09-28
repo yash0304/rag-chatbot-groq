@@ -58,7 +58,6 @@ fun CutoutMaker(
     var source by remember { mutableStateOf<Bitmap?>(null) }
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<String?>(null) }
-    var cameraFile by remember { mutableStateOf<File?>(null) }
 
     // The engine is made once per visit and closed on the way out.
     val engineHolder = remember { arrayOfNulls<CutoutEngine>(1) }
@@ -81,7 +80,7 @@ fun CutoutMaker(
         marks.clear(); mask = null; overlay = null
         if (wholePhoto) {
             scope.launch {
-                val path = withContext(Dispatchers.IO) { save(context, bitmap, png = false) }
+                val path = withContext(Dispatchers.IO) { saveBitmap(context, bitmap, png = false) }
                 onDone(path, bitmap.height.toFloat() / bitmap.width)
             }
         } else {
@@ -92,28 +91,17 @@ fun CutoutMaker(
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             loading = true
-            scope.launch { useBitmap(withContext(Dispatchers.IO) { decode(context, uri) }) }
+            scope.launch { useBitmap(withContext(Dispatchers.IO) { decodePicked(context, uri) }) }
         }
     }
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
-        val file = cameraFile
-        cameraFile = null
-        if (saved && file != null && file.length() > 0) {
-            loading = true
-            scope.launch {
-                val bmp = withContext(Dispatchers.IO) {
-                    PhotoStore.thumbnail(file.absolutePath, CutoutEngine.WORK_PX)?.let(::argb).also { file.delete() }
-                }
-                useBitmap(bmp)
+    val takePhoto = rememberTakePhoto { file ->
+        loading = true
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                PhotoStore.thumbnail(file.absolutePath, CutoutEngine.WORK_PX)?.let(::argb).also { file.delete() }
             }
-        } else {
-            file?.delete()
+            useBitmap(bmp)
         }
-    }
-    fun takePhoto() {
-        val file = PhotoStore.newFile(context)
-        cameraFile = file
-        camera.launch(FileProvider.getUriForFile(context, "${context.packageName}.files", file))
     }
 
     // Load the model and hand it the picture whenever a new one arrives.
@@ -178,7 +166,7 @@ fun CutoutMaker(
                             )
                             Button(onClick = {
                                 scope.launch {
-                                    val path = withContext(Dispatchers.IO) { save(context, bmp, png = false) }
+                                    val path = withContext(Dispatchers.IO) { saveBitmap(context, bmp, png = false) }
                                     onDone(path, bmp.height.toFloat() / bmp.width)
                                 }
                             }) { Text("Add the whole photo") }
@@ -216,7 +204,7 @@ fun CutoutMaker(
                                 scope.launch {
                                     val result = withContext(Dispatchers.Default) {
                                         CutoutEngine.cut(bmp, m)?.let { cut ->
-                                            save(context, cut, png = true) to cut.height.toFloat() / cut.width
+                                            saveBitmap(context, cut, png = true) to cut.height.toFloat() / cut.width
                                         }
                                     }
                                     working = false
@@ -303,7 +291,7 @@ private fun Editor(
 }
 
 /** A picked picture at working size, the right way up. */
-private fun decode(context: Context, uri: Uri): Bitmap? {
+internal fun decodePicked(context: Context, uri: Uri): Bitmap? {
     val temp = File(context.cacheDir, "scrap-source-${UUID.randomUUID()}")
     return try {
         context.contentResolver.openInputStream(uri)?.use { input -> temp.outputStream().use { input.copyTo(it) } }
@@ -317,11 +305,11 @@ private fun decode(context: Context, uri: Uri): Bitmap? {
 }
 
 /** The segmenter wants 8-bit ARGB; some decoders hand back other layouts. */
-private fun argb(b: Bitmap): Bitmap =
+internal fun argb(b: Bitmap): Bitmap =
     if (b.config == Bitmap.Config.ARGB_8888) b else b.copy(Bitmap.Config.ARGB_8888, false)
 
 /** Keep an image in the app's photo store; PNG for cutouts, whose see-through edges matter. */
-private fun save(context: Context, bitmap: Bitmap, png: Boolean): String {
+internal fun saveBitmap(context: Context, bitmap: Bitmap, png: Boolean): String {
     val file = File(PhotoStore.dir(context), "${UUID.randomUUID()}.${if (png) "png" else "jpg"}")
     file.outputStream().use {
         bitmap.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, if (png) 100 else 90, it)

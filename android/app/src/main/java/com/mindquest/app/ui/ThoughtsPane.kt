@@ -55,6 +55,8 @@ fun ThoughtsPane(repo: MindQuestRepository, notify: (String) -> Unit) {
     var moving by remember { mutableStateOf<NoteEntity?>(null) }
     var expanded by remember { mutableStateOf<String?>(null) }
     var input by remember { mutableStateOf("") }
+    var snapping by remember { mutableStateOf(false) }
+    if (snapping) SnapDialog(repo, startAsThought = true, notify = notify, onDismiss = { snapping = false })
     var skipFolder by remember { mutableStateOf(false) }
     LaunchedEffect(input.isBlank()) { if (input.isBlank()) skipFolder = false }
     val folderGuess = remember(input, openId, folders) {
@@ -254,6 +256,7 @@ fun ThoughtsPane(repo: MindQuestRepository, notify: (String) -> Unit) {
                     notify(r.describe { "" })
                 }
             }
+            TextButton(onClick = { snapping = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("📷") }
             Button(
                 enabled = input.isNotBlank(),
                 onClick = {

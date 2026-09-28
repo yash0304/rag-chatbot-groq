@@ -31,6 +31,7 @@ import com.mindquest.app.domain.DateParse
 import com.mindquest.app.domain.FolderMatch
 import com.mindquest.app.domain.GoalParse
 import com.mindquest.app.domain.HabitParse
+import com.mindquest.app.domain.LocalAi
 import com.mindquest.app.domain.Reminders
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -150,6 +151,8 @@ private fun ChecklistPane(repo: MindQuestRepository, notify: (String) -> Unit) {
             }
     }
     var asThought by remember { mutableStateOf(false) }
+    var snapping by remember { mutableStateOf(false) }
+    if (snapping) SnapDialog(repo, startAsThought = false, notify = notify, onDismiss = { snapping = false })
     var input by remember { mutableStateOf("") }
     var pendingRemind by remember { mutableStateOf<Long?>(null) }
     // The category is shown before the note is sent, not applied silently afterwards. It
@@ -208,6 +211,12 @@ private fun ChecklistPane(repo: MindQuestRepository, notify: (String) -> Unit) {
     fun capture(spoken: String) {
         ensureNotifPermission()
         scope.launch {
+            val smart = customFolder == null && LocalAi.ready(context) && LocalAi.smartCapture(context)
+            if (smart) {
+                notify("✨ Sorting it…")
+                repo.captureInBackground(spoken, smart = true) { notify(it.describe { t -> timeFmt.format(Date(t)) }) }
+                return@launch
+            }
             val r = repo.captureNote(spoken, folderId = customFolder)
             notify(r.describe { timeFmt.format(Date(it)) })
         }
@@ -460,6 +469,20 @@ private fun ChecklistPane(repo: MindQuestRepository, notify: (String) -> Unit) {
                             label = { Text("💭 Thought", style = MaterialTheme.typography.labelSmall) },
                         )
                     }
+                    // Let the on-phone model decide where it goes, and set any date it reads.
+                    if (customFolder == null && LocalAi.ready(context)) {
+                        AssistChip(
+                            onClick = {
+                                val line = input.trim()
+                                input = ""
+                                notify("✨ Sorting it…")
+                                repo.captureInBackground(line, smart = true) { r ->
+                                    notify(r.describe { timeFmt.format(Date(it)) })
+                                }
+                            },
+                            label = { Text("✨ Sort it", style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
                     if (goalGuess != null) {
                         TextButton(onClick = { keepAsNote = false }) {
                             Text("🎯 make it a goal", style = MaterialTheme.typography.labelSmall)
@@ -509,6 +532,7 @@ private fun ChecklistPane(repo: MindQuestRepository, notify: (String) -> Unit) {
                 maxLines = 3,
             )
             MicButton { spoken -> capture(spoken) }
+            TextButton(onClick = { snapping = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("📷") }
             TextButton(onClick = {
                 if (pendingRemind != null) {
                     pendingRemind = null

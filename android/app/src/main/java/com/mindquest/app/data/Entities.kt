@@ -413,3 +413,18 @@ data class ScrapItemEntity(
     val z: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
 )
+
+/**
+ * What's in a photo, worked out on the phone so search can find it: what it shows ("dog",
+ * "pizza", "receipt") and any words in it. Derived data — rebuilt from the photos, so not
+ * part of backups.
+ */
+@Entity(tableName = "photo_index")
+data class PhotoIndexEntity(
+    @PrimaryKey val attachmentId: String,
+    /** Comma-separated, most likely first. */
+    val labels: String,
+    /** Words read from the picture, trimmed. */
+    val text: String,
+    val indexedAt: Long = System.currentTimeMillis(),
+)

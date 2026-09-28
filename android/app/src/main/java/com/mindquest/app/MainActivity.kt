@@ -89,6 +89,8 @@ fun MindQuestApp() {
         // After the app is on screen, not before: embedding every note the first time after
         // an update can take a few seconds, and nobody should wait for it to open the app.
         launch { runCatching { repo.indexNotes() } }
+        // Then the photos, a batch at a time, so search can find them by what's in them.
+        launch { runCatching { repo.indexPhotos() } }
     }
 
     startupError?.let {
@@ -213,12 +215,18 @@ private fun HomeShell(repo: MindQuestRepository) {
         GlobalSearchSheet(
             repo = repo,
             onDismiss = { searchOpen = false },
-            onOpen = { kind ->
-                when (kind) {
+            onOpen = { hit ->
+                when (hit.kind) {
                     GlobalKind.Document -> { archivesTab = 0; open(HomeTab.Archives) }
                     GlobalKind.Goal, GlobalKind.Habit -> { inboxSegment = 1; open(HomeTab.Inbox) }
                     GlobalKind.Thought -> { inboxSegment = 2; open(HomeTab.Inbox) }
                     GlobalKind.Note, GlobalKind.Quest, GlobalKind.Folder -> { inboxSegment = 0; open(HomeTab.Inbox) }
+                    // A photo opens where it lives.
+                    GlobalKind.Photo -> when (hit.ownerKind) {
+                        MindQuestRepository.SCRAP_KIND -> { archivesTab = 2; open(HomeTab.Archives) }
+                        "goal", "habit" -> { inboxSegment = 1; open(HomeTab.Inbox) }
+                        else -> { inboxSegment = 0; open(HomeTab.Inbox) }
+                    }
                 }
             },
         )

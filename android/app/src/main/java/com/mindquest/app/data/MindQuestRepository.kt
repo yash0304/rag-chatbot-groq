@@ -22,15 +22,23 @@ import com.mindquest.app.domain.HashingEmbedder
 import com.mindquest.app.domain.Reminders
 import com.mindquest.app.domain.Retrieval
 import com.mindquest.app.domain.SarvamClient
+import com.mindquest.app.domain.LocalAi
+import com.mindquest.app.domain.SmartCapture
+import com.mindquest.app.domain.WavChunks
+import com.mindquest.app.domain.PhotoText
+import com.mindquest.app.domain.PhotoTagger
+import com.mindquest.app.domain.PhotoTags
 import com.mindquest.app.widget.TodayWidget
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -99,9 +107,13 @@ data class CaptureResult(
     val habit: HabitParse.Habit? = null,
     /** Kept in Thoughts rather than the Checklist. */
     val thought: Boolean = false,
+    /** Sorted by the on-phone model rather than by the rules. */
+    val smart: Boolean = false,
 ) {
     /** One line saying where it went — for the toast after the mic, the widget or Share. */
-    fun describe(stamp: (Long) -> String): String {
+    fun describe(stamp: (Long) -> String): String = (if (smart) "✨ " else "") + plain(stamp)
+
+    private fun plain(stamp: (Long) -> String): String {
         habit?.let { h ->
             return "🔁 Habit: ${h.title} · ${Cadences.of(h.cadence).label}" +
                 (h.minuteOfDay?.let { " · nudge ${Reminders.formatTimeOfDay(it)}" } ?: "") + " → Inbox"
@@ -142,6 +154,7 @@ enum class GlobalKind(val label: String, val icon: String) {
     Quest("Inbox", "⚔️"),
     Habit("Inbox · habit", "🔁"),
     Thought("Inbox · thought", "💭"),
+    Photo("Photo", "📷"),
     Goal("Inbox · goal", "🎯"),
     Folder("Inbox folder", "🗂"),
 }
@@ -152,6 +165,8 @@ data class GlobalHit(
     val subtitle: String,
     val refId: String?,
     val score: Float = 0f,
+    /** For photos: what the photo belongs to (note, goal, habit, scrap), to open the right place. */
+    val ownerKind: String? = null,
 )
 
 data class GraphNode(val id: String, val label: String, val type: String, val size: Int)
@@ -225,6 +240,7 @@ class MindQuestRepository(private val context: Context) {
     private val folderDao = db.folderDao()
     private val attachmentDao = db.attachmentDao()
     private val scrapDao = db.scrapDao()
+    private val photoIndexDao = db.photoIndexDao()
     private val noteVectorDao = db.noteVectorDao()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -234,8 +250,28 @@ class MindQuestRepository(private val context: Context) {
     val settings = SettingsStore(context)
     private val sarvam = SarvamClient(settings)
 
-    /** True if the Sarvam key is set, so AI features generate rather than fall back offline. */
-    fun aiConfigured(): Boolean = sarvam.isConfigured
+    /**
+     * True when some AI can answer: the on-phone model, or Sarvam with a key. Otherwise the
+     * AI features fall back to their offline versions.
+     */
+    fun aiConfigured(): Boolean = LocalAi.ready(context) || sarvam.isConfigured
+
+    /** Which AI answers, for the screens to say so. */
+    fun aiName(): String? = when {
+        LocalAi.ready(context) -> "on-phone ${LocalAi.MODEL_NAME}"
+        sarvam.isConfigured -> "Sarvam"
+        else -> null
+    }
+
+    /**
+     * Ask whichever AI there is: the on-phone model first (private, free, offline), Sarvam
+     * second. Null when there is none, so callers use their offline path.
+     */
+    private suspend fun aiComplete(system: String, user: String, temperature: Double = 0.7): String? = when {
+        LocalAi.ready(context) -> LocalAi.generate(context, user, system = system, temperature = temperature)
+        sarvam.isConfigured -> sarvam.complete(system, user)
+        else -> null
+    }
 
     // ---------- bootstrap ----------
 
@@ -478,6 +514,18 @@ class MindQuestRepository(private val context: Context) {
                 Reminders.scheduleHabit(context, habit.id, it, habit.cadence)
             }
         }
+    }
+
+    /**
+     * A set counted by the camera: XP by the rep (1 per 2, capped at 40 a set), and the
+     * daily goal it belongs to ticked if one was chosen. Returns the XP given for the set.
+     */
+    suspend fun logWorkout(exercise: String, reps: Int, habitId: String?): Int {
+        val xp = (reps / 2).coerceIn(1, 40)
+        award("workout", xp, refId = null, meta = "$reps $exercise")
+        var total = xp
+        habitId?.let { id -> total += checkin(id).xpAwarded }
+        return total
     }
 
     suspend fun checkin(id: String): CheckinResult = db.withTransaction {
@@ -958,10 +1006,27 @@ class MindQuestRepository(private val context: Context) {
         }
     }
 
-    /** Transcribe a recorded WAV via Sarvam, then import the text as a note. Requires a key. */
+    /**
+     * Transcribe a recorded WAV and file it in the Archives. On the phone with Gemma when it's
+     * installed — in 30-second pieces, the most it takes at once — otherwise via Sarvam.
+     */
     suspend fun transcribeAndImport(wav: File): String {
-        val transcript = sarvam.transcribe(wav)
+        val transcript = transcribe(wav)
         return importTextNote("Voice note · ${LocalDate.now()}", transcript)
+    }
+
+    suspend fun transcribe(wav: File): String = if (LocalAi.ready(context)) {
+        val clips = withContext(Dispatchers.IO) { WavChunks.split(wav.readBytes(), LocalAi.AUDIO_CLIP_SECONDS) }
+        clips.map { clip ->
+            LocalAi.generate(
+                context,
+                "Transcribe this audio exactly as spoken, in the language spoken. Reply with only the transcript.",
+                audioWav = clip, temperature = 0.1,
+            )
+        }.filter { it.isNotBlank() }.joinToString(" ").trim()
+            .ifBlank { throw IllegalStateException("Nothing could be heard in the recording.") }
+    } else {
+        sarvam.transcribe(wav)
     }
 
     suspend fun deleteDocument(id: String) {
@@ -1050,30 +1115,52 @@ class MindQuestRepository(private val context: Context) {
     suspend fun sendNarratorMessage(text: String) {
         chatDao.insert(ChatMessageEntity(id = UUID.randomUUID().toString(), role = "user", content = text))
         val hits = search(text, 6)
+        // Your own notes, thoughts and goals count as sources too: "what's the puncture
+        // man's number?" is answered from Thoughts, not from a PDF.
+        val mine = searchEverything(text, perKind = 4)
+            .filter { it.kind in setOf(GlobalKind.Note, GlobalKind.Thought, GlobalKind.Goal, GlobalKind.Habit) }
+            .take(5)
+        val passages: List<Pair<Citation, String>> =
+            hits.mapIndexed { i, h -> Citation(i + 1, h.title, h.snippet, h.location) to h.snippet } +
+                mine.mapIndexed { i, h ->
+                    val what = when (h.kind) {
+                        GlobalKind.Thought -> "Your thoughts"
+                        GlobalKind.Goal -> "Your goals"
+                        GlobalKind.Habit -> "Your daily goals"
+                        else -> "Your notes"
+                    }
+                    Citation(hits.size + i + 1, what, h.title, h.subtitle) to h.title
+                }
         var answer: String
         var citations: List<Citation>
 
-        if (hits.isEmpty()) {
-            answer = "The archives hold no scrolls on this. Upload documents in the Archives, then ask me again."
+        if (passages.isEmpty() && !aiConfigured()) {
+            answer = "Nothing in your notes or archives on this yet. Add documents in the Archives, or " +
+                "install the on-phone AI in Settings to ask about anything."
             citations = emptyList()
         } else {
-            val retrievalCitations = hits.mapIndexed { i, h -> Citation(i + 1, h.title, h.snippet, h.location) }
-            if (sarvam.isConfigured) {
-                val blocks = hits.mapIndexed { i, h ->
-                    "[${i + 1}] (from \"${h.title}\"${h.location?.let { ", $it" } ?: ""})\n${h.snippet}"
-                }.joinToString("\n\n")
-                try {
-                    val raw = sarvam.complete(Narrator.NARRATOR_SYSTEM, "Context passages:\n\n$blocks\n\nQuestion: $text")
-                    val cleaned = Narrator.stripInvalidMarkers(raw, hits.size)
-                    answer = cleaned
-                    citations = Narrator.citedIndices(cleaned, hits.size).map { retrievalCitations[it - 1] }
-                } catch (e: Exception) {
-                    answer = "The Narrator rests (${e.message}). From your archives:\n\n" + retrievalAnswer(hits)
-                    citations = retrievalCitations
+            val blocks = passages.joinToString("\n\n") { (c, body) ->
+                "[${c.index}] (from \"${c.title}\"${c.location?.let { ", $it" } ?: ""})\n$body"
+            }
+            try {
+                val raw = if (passages.isEmpty()) {
+                    aiComplete(Narrator.GENERAL_SYSTEM, text)
+                } else {
+                    aiComplete(Narrator.NARRATOR_SYSTEM, "Context passages:\n\n$blocks\n\nQuestion: $text")
                 }
-            } else {
-                answer = "From your archives (add a Sarvam key in Settings for a spoken answer):\n\n" + retrievalAnswer(hits)
-                citations = retrievalCitations
+                if (raw == null) {
+                    answer = "From your notes and archives (install the on-phone AI or add a Sarvam key in " +
+                        "Settings for a written answer):\n\n" + passages.take(3).joinToString("\n\n") { (c, body) -> "[${c.index}] ${body.take(300)}…" }
+                    citations = passages.map { it.first }
+                } else {
+                    val cleaned = Narrator.stripInvalidMarkers(raw, passages.size)
+                    answer = cleaned
+                    citations = Narrator.citedIndices(cleaned, passages.size).map { passages[it - 1].first }
+                }
+            } catch (e: Exception) {
+                answer = "The Narrator rests (${e.message}). From your notes and archives:\n\n" +
+                    passages.take(3).joinToString("\n\n") { (c, body) -> "[${c.index}] ${body.take(300)}…" }
+                citations = passages.map { it.first }
             }
         }
         award("knowledge_consulted", Catalogs.Xp.KNOWLEDGE_CONSULTED, refId = null)
@@ -1109,15 +1196,11 @@ class MindQuestRepository(private val context: Context) {
             documentsProcessed = byKind["document_processed"] ?: 0,
             milestones = byKind["milestone_completed"] ?: 0,
         )
-        val narrative = if (sarvam.isConfigured) {
-            try {
-                sarvam.complete(Narrator.REVIEW_SYSTEM, "This week's statistics: ${json.encodeToString(stats)}")
-            } catch (e: Exception) {
-                Narrator.offlineReviewNarrative(stats.xpEarned, stats.questsCompleted, stats.habitCheckins, stats.documentsProcessed)
-            }
-        } else {
-            Narrator.offlineReviewNarrative(stats.xpEarned, stats.questsCompleted, stats.habitCheckins, stats.documentsProcessed)
-        }
+        val narrative = try {
+            aiComplete(Narrator.REVIEW_SYSTEM, "This week's statistics: ${json.encodeToString(stats)}")
+        } catch (e: Exception) {
+            null
+        } ?: Narrator.offlineReviewNarrative(stats.xpEarned, stats.questsCompleted, stats.habitCheckins, stats.documentsProcessed)
         val review = WeeklyReviewEntity(
             weekStart = ws,
             statsJson = json.encodeToString(stats),
@@ -1146,21 +1229,13 @@ class MindQuestRepository(private val context: Context) {
     }
 
     suspend fun generateQuests(count: Int = 3): Int {
-        val drafts: List<QuestGen> = if (sarvam.isConfigured) {
-            try {
-                val recent = documentDao.readyDocuments().take(5).joinToString("; ") { it.title }
-                val raw = sarvam.complete(
-                    Narrator.QUESTMASTER_SYSTEM,
-                    "Recent studies: $recent. Generate $count quests as a JSON array.",
-                )
-                Narrator.extractJsonArray(raw)?.let { json.decodeFromString<List<QuestGen>>(it) }
-                    ?: offlineQuestPool(count)
-            } catch (e: Exception) {
-                offlineQuestPool(count)
-            }
-        } else {
-            offlineQuestPool(count)
-        }
+        val drafts: List<QuestGen> = try {
+            val recent = documentDao.readyDocuments().take(5).joinToString("; ") { it.title }
+            aiComplete(Narrator.QUESTMASTER_SYSTEM, "Recent studies: $recent. Generate $count quests as a JSON array.")
+                ?.let { raw -> Narrator.extractJsonArray(raw)?.let { json.decodeFromString<List<QuestGen>>(it) } }
+        } catch (e: Exception) {
+            null
+        } ?: offlineQuestPool(count)
         drafts.take(count).forEach { g ->
             val diff = if (g.difficulty.lowercase() in Catalogs.difficultyXp) g.difficulty.lowercase() else "normal"
             questDao.upsert(
@@ -1498,9 +1573,29 @@ class MindQuestRepository(private val context: Context) {
                 caption = caption?.trim()?.takeIf { it.isNotBlank() },
             ),
         )
+        // Tag it straight away, so it can be searched for by what's in it.
+        captureScope.launch { runCatching { indexPhotos(5) } }
     }
 
     /** Removing a photo deletes the file too — nothing else refers to it. */
+    /**
+     * Work out what's in photos not yet looked at: labels from the image classifier and the
+     * words in them. A few at a time, in the background; search picks them up as they land.
+     */
+    suspend fun indexPhotos(max: Int = 40) = withContext(Dispatchers.Default) {
+        photoIndexDao.pruneOrphans()
+        val done = photoIndexDao.indexedIds().toSet()
+        attachmentDao.allAttachments().filter { it.id !in done }.take(max).forEach { a ->
+            val bmp = PhotoStore.thumbnail(a.path, 640)
+            // An unreadable file is recorded as empty so it isn't retried on every launch.
+            val text = bmp?.let { PhotoText.read(it) }.orEmpty().take(2000)
+            val labels = bmp?.let { PhotoTagger.labels(context, it) }.orEmpty()
+            photoIndexDao.upsert(
+                PhotoIndexEntity(a.id, (PhotoTags.tagsFromText(text) + labels).distinct().joinToString(", "), text),
+            )
+        }
+    }
+
     suspend fun deleteAttachment(id: String) {
         val attachment = attachmentDao.get(id) ?: return
         PhotoStore.delete(attachment.path)
@@ -1712,6 +1807,8 @@ class MindQuestRepository(private val context: Context) {
         folderId: String? = null,
         category: String? = null,
         kind: String? = null,
+        /** Let the on-phone model sort it first, when installed. Only where waiting is fine. */
+        smart: Boolean = false,
     ): CaptureResult {
         // A thought is kept exactly as said: "Starbucks closes early on Sunday" is something
         // to remember, not a reminder for Sunday, and nothing in it is routed elsewhere.
@@ -1736,6 +1833,9 @@ class MindQuestRepository(private val context: Context) {
                         checkpoint = cp, checkpointOf = main.title, checkpointMet = met,
                     )
                 }
+            }
+            if (smart && LocalAi.ready(context) && LocalAi.smartCapture(context)) {
+                smartCapture(spoken)?.let { return it }
             }
             GoalParse.detect(spoken)?.let { goal ->
                 val id = createTargetGoal(goal, narrative = spoken)
@@ -1768,6 +1868,87 @@ class MindQuestRepository(private val context: Context) {
         )
         if (folder != null) setNoteFolder(id, folder.id)
         return CaptureResult(id, text, parsed.dueAt, chosen, folder?.id, repeat, folderName = folder?.name)
+    }
+
+    /** Outlives any one screen, so a capture still lands if you switch tabs while it's sorted. */
+    private val captureScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
+
+    /** [captureNote] in the background; [onDone] is told where it went. */
+    fun captureInBackground(
+        spoken: String,
+        folderId: String? = null,
+        smart: Boolean = false,
+        onDone: (CaptureResult) -> Unit,
+    ) {
+        captureScope.launch {
+            val r = captureNote(spoken, folderId = folderId, smart = smart)
+            withContext(Dispatchers.Main) { onDone(r) }
+        }
+    }
+
+    /**
+     * Gemma reads the line and says what it is; the app then files it exactly as if the
+     * rules had. Null — use the rules — when the model is unsure or its answer doesn't check
+     * out. A goal must still be something the goal reader understands, so its numbers and
+     * units stay in one place.
+     */
+    private suspend fun smartCapture(spoken: String): CaptureResult? {
+        val today = LocalDate.now()
+        val r = try {
+            SmartCapture.parse(LocalAi.generate(context, spoken, system = SmartCapture.system(today), temperature = 0.2), today)
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        return when (r.kind) {
+            "thought" -> {
+                val folder = bestFolderFor(r.text, KIND_THOUGHT)
+                val id = addNote(text = r.text, kind = KIND_THOUGHT)
+                if (folder != null) setNoteFolder(id, folder.id)
+                CaptureResult(id, r.text, null, "general", folder?.id, folderName = folder?.name, thought = true, smart = true)
+            }
+            "habit" -> {
+                val h = HabitParse.Habit(r.text, r.repeat?.takeIf { it in setOf("daily", "weekdays", "weekly") } ?: "daily",
+                    r.time?.let { it.hour * 60 + it.minute })
+                val id = createHabitFrom(h)
+                CaptureResult(id, h.title, null, "general", null, habit = h, smart = true)
+            }
+            "goal" -> {
+                val month = r.deadline!!.month.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+                val goal = GoalParse.detect("${r.target} by $month ${r.deadline.year}") ?: return null
+                val id = createTargetGoal(goal, narrative = spoken)
+                CaptureResult(id, goal.title, null, "general", null, goal = goal, smart = true)
+            }
+            else -> {
+                val at = r.date?.let { d ->
+                    d.atTime(r.time ?: LocalTime.of(9, 0)).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                }?.takeIf { it > System.currentTimeMillis() }
+                val repeat = r.repeat?.takeIf { at != null }
+                val category = Categories.classify(r.text)
+                val folder = bestFolderFor(r.text)
+                val id = addNote(text = r.text, remindAt = at, category = category, repeat = repeat)
+                if (folder != null) setNoteFolder(id, folder.id)
+                CaptureResult(id, r.text, at, category, folder?.id, repeat, folderName = folder?.name, smart = true)
+            }
+        }
+    }
+
+    /**
+     * A photo turned into a line: to-do (with any date in the words) or thought, with the
+     * photo kept on it.
+     */
+    suspend fun addSnapNote(text: String, thought: Boolean, photoPath: String): String {
+        val id = if (thought) {
+            addNote(text = text, kind = KIND_THOUGHT)
+        } else {
+            val parsed = DateParse.parse(text)
+            addNote(
+                text = parsed.text.ifBlank { text },
+                remindAt = parsed.dueAt,
+                repeat = parsed.repeat?.takeIf { parsed.dueAt != null },
+            )
+        }
+        addAttachment("note", id, photoPath)
+        return id
     }
 
     /** The user folder a line belongs in, if it shares a word with the folder's name. */
@@ -1886,6 +2067,33 @@ class MindQuestRepository(private val context: Context) {
                         "${it.icon} ${it.name}", "folder", it.id,
                     )
                 }
+
+            // Photos, by what they show and the words in them: "receipt", "dog", "Sharma Tyres".
+            if (words.isNotEmpty()) {
+                val owners = attachmentDao.allAttachments().associateBy { it.id }
+                photoIndexDao.all()
+                    .filter { row ->
+                        val hay = (row.labels + " " + row.text).lowercase()
+                        words.all { it in hay }
+                    }
+                    .take(perKind)
+                    .forEach { row ->
+                        val a = owners[row.attachmentId] ?: return@forEach
+                        val where = when (a.ownerKind) {
+                            "note" -> "Inbox"
+                            "goal" -> "Goals"
+                            "habit" -> "Daily goals"
+                            SCRAP_KIND -> "Scrapbook"
+                            else -> "Photos"
+                        }
+                        val firstLine = row.text.lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+                        hits += GlobalHit(
+                            GlobalKind.Photo,
+                            listOf(row.labels, firstLine).filter { it.isNotBlank() }.joinToString(" · ").take(120).ifBlank { "Photo" },
+                            where, a.id, ownerKind = a.ownerKind,
+                        )
+                    }
+            }
 
             search(q, perKind).forEach {
                 hits += GlobalHit(

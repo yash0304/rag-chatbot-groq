@@ -22,6 +22,12 @@ object Narrator {
             "sentences, light original-fantasy flavor), difficulty (one of: trivial, easy, normal, " +
             "hard, epic). No prose outside the JSON. No copyrighted references."
 
+    /** When nothing in the user's notes or archives matches: answer plainly, and say so. */
+    const val GENERAL_SYSTEM =
+        "You are the Narrator of MindQuest, a helpful assistant inside the user's notes app. Nothing in " +
+            "their notes or documents matches this question, so answer from general knowledge — briefly " +
+            "and clearly — and say in one short line that it isn't from their notes."
+
     const val REVIEW_SYSTEM =
         "You are the Narrator of MindQuest. Write an encouraging 3-6 sentence weekly review of the " +
             "hero's real productivity in a light original-fantasy voice, then one concrete suggestion " +
