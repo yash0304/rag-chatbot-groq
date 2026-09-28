@@ -1,6 +1,7 @@
 // Explicit: inside a Kotlin build script `java` is Gradle's JavaPluginExtension, so the
 // fully-qualified `java.net.URI` does not resolve.
 import java.net.URI
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -84,14 +85,11 @@ android {
     }
     // MediaPipe memory-maps its model straight out of the APK, which needs it stored as is.
     androidResources {
-        noCompress += "tflite"
+        noCompress += listOf("tflite", "task")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     ksp {
         arg("room.schemaLocation", "$projectDir/schemas")
@@ -117,10 +115,21 @@ dependencies {
     // Runs on the phone; the model is fetched into assets below.
     implementation("com.google.mediapipe:tasks-vision:1.0.0")
 
+    // On-phone Gemma (assistant, photo → note, offline voice, smart capture). The model is
+    // downloaded in the app on request, never bundled; this is only the runtime.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+
+    // Live camera for the rep counter (pose landmarks from MediaPipe, above).
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+
     // Room — local on-device database (offline source of truth)
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    // 2.7 for KSP2, which KSP 2.3 is; the schema and migrations are unchanged by it.
+    implementation("androidx.room:room-runtime:2.7.2")
+    implementation("androidx.room:room-ktx:2.7.2")
+    ksp("androidx.room:room-compiler:2.7.2")
 
     // On-device OCR (offline, bundled Latin model) — Phase 3 documents
     implementation("com.google.mlkit:text-recognition:16.0.1")
@@ -143,6 +152,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MQ-25: fetch the MiniLM sentence-embedding model into assets at build time.
 //
@@ -158,6 +173,10 @@ val embeddingAssets = mapOf(
     // MediaPipe "Magic Touch" interactive segmentation model (Apache 2.0, ~6 MB) for the
     // scrapbook. Missing → the scrapbook offers whole photos instead of cutouts.
     "magic_touch.tflite" to "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite",
+    // Rep counter: body pose (~6 MB). Photo tags: what's in a picture (~5 MB). Both
+    // MediaPipe, Apache 2.0; each feature says so plainly if its model is missing.
+    "pose_landmarker_lite.task" to "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+    "efficientnet_lite0.tflite" to "https://storage.googleapis.com/mediapipe-models/image_classifier/efficientnet_lite0/float32/latest/efficientnet_lite0.tflite",
 )
 
 val fetchEmbeddingModel by tasks.registering {

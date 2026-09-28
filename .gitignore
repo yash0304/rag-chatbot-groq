@@ -51,4 +51,6 @@ android/.gradle/
 android/app/src/main/assets/minilm.onnx
 android/app/src/main/assets/minilm_vocab.txt
 android/app/src/main/assets/magic_touch.tflite
+android/app/src/main/assets/pose_landmarker_lite.task
+android/app/src/main/assets/efficientnet_lite0.tflite
 android/app/src/main/assets/*.part
