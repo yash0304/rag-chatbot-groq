@@ -45,7 +45,7 @@ fun ProgressScreen(repo: MindQuestRepository, profile: ProfileEntity?, notify: (
     }
 }
 
-/** Your documents, and the assistant that answers from them — two views of one library. */
+/** Your documents, the assistant that answers from them, and the scrapbook of your photos. */
 @Composable
 fun ArchivesHub(
     repo: MindQuestRepository,
@@ -61,9 +61,14 @@ fun ArchivesHub(
         ) {
             Tab(selected = tab == 0, onClick = { onTab(0) }, text = { Text("📚 Library") })
             Tab(selected = tab == 1, onClick = { onTab(1) }, text = { Text("✨ Ask") })
+            Tab(selected = tab == 2, onClick = { onTab(2) }, text = { Text("✂️ Scrapbook") })
         }
         Box(Modifier.weight(1f)) {
-            if (tab == 0) ArchivesScreen(repo, notify) else NarratorScreen(repo, notify)
+            when (tab) {
+                0 -> ArchivesScreen(repo, notify)
+                1 -> NarratorScreen(repo, notify)
+                else -> ScrapbookPane(repo, notify)
+            }
         }
     }
 }

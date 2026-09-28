@@ -50,4 +50,5 @@ android/.gradle/
 # MQ-25 embedding model — fetched at build time, never committed (23 MB, public repo)
 android/app/src/main/assets/minilm.onnx
 android/app/src/main/assets/minilm_vocab.txt
+android/app/src/main/assets/magic_touch.tflite
 android/app/src/main/assets/*.part

@@ -7,4 +7,6 @@
 <paths>
     <files-path name="attachments" path="attachments/" />
     <cache-path name="backups" path="backups/" />
+    <!-- A scrapbook page, rendered to an image for one share. -->
+    <cache-path name="shares" path="shares/" />
 </paths>

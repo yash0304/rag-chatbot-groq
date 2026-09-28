@@ -82,6 +82,10 @@ android {
         compose = true
         buildConfig = true
     }
+    // MediaPipe memory-maps its model straight out of the APK, which needs it stored as is.
+    androidResources {
+        noCompress += "tflite"
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -108,6 +112,10 @@ dependencies {
 
     // On-device sentence embeddings (MQ-25) — runs the MiniLM ONNX graph locally
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+
+    // Scrapbook cutouts: MediaPipe's interactive segmenter, as in Google's AI Edge Gallery.
+    // Runs on the phone; the model is fetched into assets below.
+    implementation("com.google.mediapipe:tasks-vision:1.0.0")
 
     // Room — local on-device database (offline source of truth)
     implementation("androidx.room:room-runtime:2.6.1")
@@ -147,6 +155,9 @@ dependencies {
 val embeddingAssets = mapOf(
     "minilm.onnx" to "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
     "minilm_vocab.txt" to "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/vocab.txt",
+    // MediaPipe "Magic Touch" interactive segmentation model (Apache 2.0, ~6 MB) for the
+    // scrapbook. Missing → the scrapbook offers whole photos instead of cutouts.
+    "magic_touch.tflite" to "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite",
 )
 
 val fetchEmbeddingModel by tasks.registering {

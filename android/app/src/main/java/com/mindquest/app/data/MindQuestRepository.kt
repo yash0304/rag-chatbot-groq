@@ -201,6 +201,9 @@ data class ExportBundle(
     val goalProgress: List<GoalProgressEntity> = emptyList(),
     /** Mini goals inside target goals, planned and hand-set. */
     val goalCheckpoints: List<GoalCheckpointEntity> = emptyList(),
+    /** Scrapbook pages and the layout of their cutouts; the images are in [attachments]. */
+    val scrapPages: List<ScrapPageEntity> = emptyList(),
+    val scrapItems: List<ScrapItemEntity> = emptyList(),
 )
 
 /**
@@ -221,6 +224,7 @@ class MindQuestRepository(private val context: Context) {
     private val noteDao = db.noteDao()
     private val folderDao = db.folderDao()
     private val attachmentDao = db.attachmentDao()
+    private val scrapDao = db.scrapDao()
     private val noteVectorDao = db.noteVectorDao()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -1200,6 +1204,8 @@ class MindQuestRepository(private val context: Context) {
         attachments = attachmentDao.allAttachments(),
         goalProgress = goalDao.allProgress(),
         goalCheckpoints = goalDao.allCheckpoints(),
+        scrapPages = scrapDao.allPages(),
+        scrapItems = scrapDao.allItems(),
     )
 
     suspend fun exportJson(): String {
@@ -1261,6 +1267,10 @@ class MindQuestRepository(private val context: Context) {
         bundle.attachments.forEach { attachmentDao.upsert(it) }
         bundle.goalProgress.forEach { goalDao.upsertProgress(it) }
         bundle.goalCheckpoints.forEach { goalDao.upsertCheckpoint(it) }
+        bundle.scrapPages.forEach { scrapDao.upsertPage(it) }
+        // A cutout whose image didn't come back with the restore would be an empty frame.
+        val restoredImages = bundle.attachments.map { it.id }.toSet()
+        bundle.scrapItems.filter { it.id in restoredImages }.forEach { scrapDao.upsertItem(it) }
         // A backup from before quests joined the Inbox still has them as quests; bring them
         // over the same way the upgrade did, so nothing restored is left with nowhere to show.
         withContext(Dispatchers.IO) { MindQuestDatabase.foldQuestsIntoInbox(db.openHelper.writableDatabase) }
@@ -1495,6 +1505,74 @@ class MindQuestRepository(private val context: Context) {
         val attachment = attachmentDao.get(id) ?: return
         PhotoStore.delete(attachment.path)
         attachmentDao.delete(id)
+    }
+
+    // ---------- scrapbook ----------
+
+    fun observeScrapPages(): Flow<List<ScrapPageEntity>> = scrapDao.observePages()
+
+    fun observeScrapItems(): Flow<List<ScrapItemEntity>> = scrapDao.observeAllItems()
+
+    suspend fun createScrapPage(title: String, background: Int): String {
+        val id = UUID.randomUUID().toString()
+        scrapDao.upsertPage(ScrapPageEntity(id = id, title = title.trim().ifBlank { "Untitled" }, background = background))
+        return id
+    }
+
+    suspend fun renameScrapPage(id: String, title: String) {
+        val page = scrapDao.getPage(id) ?: return
+        scrapDao.upsertPage(page.copy(title = title.trim().ifBlank { page.title }, updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun setScrapBackground(id: String, background: Int) {
+        val page = scrapDao.getPage(id) ?: return
+        scrapDao.upsertPage(page.copy(background = background, updatedAt = System.currentTimeMillis()))
+    }
+
+    /** A page goes with its cutouts — the layout rows and the image files both. */
+    suspend fun deleteScrapPage(id: String) {
+        scrapDao.itemsOf(id).forEach { deleteScrapItem(it.id) }
+        attachmentDao.of(SCRAP_KIND, id).forEach { deleteAttachment(it.id) }
+        scrapDao.deletePage(id)
+    }
+
+    /**
+     * Put an image on a page, on top of everything else and a little off-centre each time so
+     * a second cutout doesn't land exactly over the first.
+     */
+    suspend fun addScrapItem(pageId: String, path: String, aspect: Float): String {
+        val id = UUID.randomUUID().toString()
+        attachmentDao.upsert(AttachmentEntity(id = id, ownerKind = SCRAP_KIND, ownerId = pageId, path = path))
+        val existing = scrapDao.itemsOf(pageId)
+        val nudge = (existing.size % 5) * 0.04f
+        scrapDao.upsertItem(
+            ScrapItemEntity(
+                id = id, pageId = pageId,
+                x = 0.42f + nudge, y = 0.42f + nudge,
+                aspect = aspect.coerceIn(0.1f, 10f),
+                // Tall cutouts start narrower so they fit on the page.
+                scale = (0.5f / maxOf(1f, aspect)).coerceAtLeast(0.2f),
+                z = (existing.maxOfOrNull { it.z } ?: 0) + 1,
+            ),
+        )
+        scrapDao.getPage(pageId)?.let { scrapDao.upsertPage(it.copy(updatedAt = System.currentTimeMillis())) }
+        return id
+    }
+
+    suspend fun updateScrapItem(item: ScrapItemEntity) {
+        if (scrapDao.getItem(item.id) == null) return // removed while a move was pending
+        scrapDao.upsertItem(item)
+    }
+
+    suspend fun bringScrapToFront(id: String) {
+        val item = scrapDao.getItem(id) ?: return
+        val top = scrapDao.itemsOf(item.pageId).maxOfOrNull { it.z } ?: 0
+        if (item.z < top) scrapDao.upsertItem(item.copy(z = top + 1))
+    }
+
+    suspend fun deleteScrapItem(id: String) {
+        scrapDao.deleteItem(id)
+        deleteAttachment(id)
     }
 
     suspend fun setDocumentCategory(id: String, category: String) {
@@ -1889,6 +1967,9 @@ class MindQuestRepository(private val context: Context) {
 
         /** Ticking an Inbox item: a little for any, the old "hard quest" reward for a starred one. */
         const val TASK_XP = 10
+
+        /** Attachment kind for scrapbook images; the owner is the page. */
+        const val SCRAP_KIND = "scrap"
         const val STARRED_TASK_XP = 50
     }
 }

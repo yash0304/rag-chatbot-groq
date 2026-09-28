@@ -30,8 +30,10 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         NoteVectorEntity::class,
         GoalProgressEntity::class,
         GoalCheckpointEntity::class,
+        ScrapPageEntity::class,
+        ScrapItemEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class MindQuestDatabase : RoomDatabase() {
@@ -48,6 +50,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
     abstract fun folderDao(): FolderDao
     abstract fun attachmentDao(): AttachmentDao
     abstract fun noteVectorDao(): NoteVectorDao
+    abstract fun scrapDao(): ScrapDao
 
     companion object {
         @Volatile
@@ -98,6 +101,24 @@ abstract class MindQuestDatabase : RoomDatabase() {
                         "`createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_createdAt` ON `notes` (`createdAt`)")
+            }
+        }
+
+        /** v15→v16: the scrapbook — pages, and where each cutout sits on its page. Additive. */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `scrap_pages` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                        "`background` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `scrap_items` (`id` TEXT NOT NULL, `pageId` TEXT NOT NULL, " +
+                        "`x` REAL NOT NULL, `y` REAL NOT NULL, `scale` REAL NOT NULL, `aspect` REAL NOT NULL, " +
+                        "`rotation` REAL NOT NULL, `z` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_scrap_items_pageId` ON `scrap_items` (`pageId`)")
             }
         }
 
@@ -282,7 +303,7 @@ abstract class MindQuestDatabase : RoomDatabase() {
             return Room.databaseBuilder(app, MindQuestDatabase::class.java, NAME)
                 // Real additive migrations preserve data on upgrade (MQ-20). Destructive only
                 // as a last resort on downgrade, which shouldn't happen in normal use.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
                 .build()

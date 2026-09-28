@@ -373,3 +373,43 @@ data class WeeklyReviewEntity(
     val suggestionsJson: String,
     val createdAt: Long = System.currentTimeMillis(),
 )
+
+/**
+ * A scrapbook page: cutouts from your photos arranged on a coloured background. The layout
+ * lives in [ScrapItemEntity]; the images themselves are attachments (kind "scrap"), so they
+ * travel with backups exactly like every other photo.
+ */
+@Entity(tableName = "scrap_pages")
+@Serializable
+data class ScrapPageEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    /** ARGB colour of the page. */
+    val background: Int,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long? = null,
+)
+
+/**
+ * One cutout on a page. Position and size are fractions of the page, so the same layout
+ * draws the same at any size — a thumbnail, the editor, a 1080-pixel export.
+ * [id] is also the id of the attachment holding the image.
+ */
+@Entity(tableName = "scrap_items", indices = [Index("pageId")])
+@Serializable
+data class ScrapItemEntity(
+    @PrimaryKey val id: String,
+    val pageId: String,
+    /** Centre, as a fraction of page width and height. */
+    val x: Float = 0.5f,
+    val y: Float = 0.5f,
+    /** Width, as a fraction of page width. */
+    val scale: Float = 0.45f,
+    /** Height over width of the image, so it can be laid out before it's decoded. */
+    val aspect: Float = 1f,
+    /** Degrees, clockwise. */
+    val rotation: Float = 0f,
+    /** Stacking order; higher is on top. */
+    val z: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+)

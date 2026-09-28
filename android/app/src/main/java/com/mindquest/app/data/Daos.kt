@@ -404,3 +404,39 @@ interface CatalogDao {
     @Query("SELECT COUNT(*) FROM collectibles")
     suspend fun collectibleCount(): Int
 }
+
+@Dao
+interface ScrapDao {
+    @Upsert
+    suspend fun upsertPage(page: ScrapPageEntity)
+
+    @Query("SELECT * FROM scrap_pages ORDER BY createdAt DESC")
+    fun observePages(): Flow<List<ScrapPageEntity>>
+
+    @Query("SELECT * FROM scrap_pages WHERE id = :id")
+    suspend fun getPage(id: String): ScrapPageEntity?
+
+    @Query("SELECT * FROM scrap_pages")
+    suspend fun allPages(): List<ScrapPageEntity>
+
+    @Query("DELETE FROM scrap_pages WHERE id = :id")
+    suspend fun deletePage(id: String)
+
+    @Upsert
+    suspend fun upsertItem(item: ScrapItemEntity)
+
+    @Query("SELECT * FROM scrap_items WHERE id = :id")
+    suspend fun getItem(id: String): ScrapItemEntity?
+
+    @Query("SELECT * FROM scrap_items ORDER BY z")
+    fun observeAllItems(): Flow<List<ScrapItemEntity>>
+
+    @Query("SELECT * FROM scrap_items WHERE pageId = :pageId ORDER BY z")
+    suspend fun itemsOf(pageId: String): List<ScrapItemEntity>
+
+    @Query("SELECT * FROM scrap_items")
+    suspend fun allItems(): List<ScrapItemEntity>
+
+    @Query("DELETE FROM scrap_items WHERE id = :id")
+    suspend fun deleteItem(id: String)
+}
